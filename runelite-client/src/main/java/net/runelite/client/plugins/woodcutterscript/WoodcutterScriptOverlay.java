@@ -30,43 +30,44 @@ public class WoodcutterScriptOverlay extends OverlayPanel
 	@Override
 	public Dimension render(Graphics2D graphics)
 	{
-		if (!config.showOverlay())
-		{
-			return null;
-		}
-
 		panelComponent.getChildren().add(TitleComponent.builder()
 			.text("Woodcutter Script")
 			.color(Color.GREEN)
 			.build());
 
-		boolean running = plugin.isRunning();
+		boolean running = config.startScript();
 		panelComponent.getChildren().add(LineComponent.builder()
-			.left("Tila:")
-			.right(running ? "PÄÄLLÄ" : "POIS")
+			.left("Status:")
+			.right(running ? "RUNNING" : "STOPPED")
 			.rightColor(running ? Color.GREEN : Color.RED)
 			.build());
 
 		panelComponent.getChildren().add(LineComponent.builder()
-			.left("Status:")
+			.left("State:")
 			.right(plugin.getStatusLabel())
 			.rightColor(Color.WHITE)
 			.build());
 
 		panelComponent.getChildren().add(LineComponent.builder()
-			.left("Kohde:")
-			.right(plugin.getTreeType().getLabel())
+			.left("Target Tree:")
+			.right(config.treeType().getLabel())
 			.rightColor(Color.YELLOW)
 			.build());
 
 		panelComponent.getChildren().add(LineComponent.builder()
-			.left("Halot kaadettu:")
+			.left("Inventory:")
+			.right(plugin.getCurrentInventoryLogs() + " / 28")
+			.rightColor(plugin.getCurrentInventoryLogs() >= 28 ? Color.GREEN : Color.YELLOW)
+			.build());
+
+		panelComponent.getChildren().add(LineComponent.builder()
+			.left("Logs Cut:")
 			.right(String.valueOf(plugin.getLogsCut()))
 			.rightColor(Color.LIGHT_GRAY)
 			.build());
 
 		panelComponent.getChildren().add(LineComponent.builder()
-			.left("XP saatu:")
+			.left("XP Gained:")
 			.right(String.format("%,d", plugin.getWoodcuttingXpGained()))
 			.rightColor(Color.CYAN)
 			.build());
@@ -74,9 +75,9 @@ public class WoodcutterScriptOverlay extends OverlayPanel
 		if (running)
 		{
 			panelComponent.getChildren().add(LineComponent.builder()
-				.left("Aika:")
+				.left("Uptime:")
 				.right(plugin.getFormattedUptime())
-				.rightColor(Color.LIGHT_GRAY)
+				.rightColor(Color.WHITE)
 				.build());
 		}
 

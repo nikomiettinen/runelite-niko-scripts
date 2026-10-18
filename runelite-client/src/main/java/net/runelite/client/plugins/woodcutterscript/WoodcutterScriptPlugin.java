@@ -5,9 +5,6 @@
 package net.runelite.client.plugins.woodcutterscript;
 
 import com.google.inject.Provides;
-import java.awt.Color;
-import java.awt.Graphics2D;
-import java.awt.image.BufferedImage;
 import java.util.Comparator;
 import java.util.Set;
 import javax.inject.Inject;
@@ -38,12 +35,10 @@ import net.runelite.api.widgets.WidgetInfo;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
-import net.runelite.client.ui.ClientToolbar;
-import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
-import net.runelite.client.util.ImageUtil;
 
 @Slf4j
 @PluginDescriptor(
@@ -102,8 +97,8 @@ public class WoodcutterScriptPlugin extends Plugin
 	@Getter
 	public enum Status
 	{
-		STOPPED("Stopped"),
-		OUT_OF_AREA("Go to selected tree area"),
+		STOPPED("STOPPED"),
+		OUT_OF_AREA("Go to tree area"),
 		CHOPPING("Chopping tree"),
 		WAITING_FOR_TREE("Waiting for tree spawn"),
 		WALKING_TO_BANK("Walking to bank"),
@@ -124,9 +119,6 @@ public class WoodcutterScriptPlugin extends Plugin
 	private ClientThread clientThread;
 
 	@Inject
-	private ClientToolbar clientToolbar;
-
-	@Inject
 	private OverlayManager overlayManager;
 
 	@Inject
@@ -134,17 +126,6 @@ public class WoodcutterScriptPlugin extends Plugin
 
 	@Inject
 	private WoodcutterScriptConfig config;
-
-	@Inject
-	private WoodcutterScriptPanel panel;
-
-	private NavigationButton navigationButton;
-
-	@Getter
-	private volatile boolean running;
-
-	@Getter
-	private volatile TreeType treeType = TreeType.OAK;
 
 	private int actionDelay;
 	private boolean tryBoothNext = true;
@@ -172,66 +153,74 @@ public class WoodcutterScriptPlugin extends Plugin
 	protected void startUp()
 	{
 		overlayManager.add(overlay);
-		panel.init(this);
-		navigationButton = NavigationButton.builder()
-			.tooltip("Woodcutter Script")
-			.priority(6)
-			.icon(createIcon())
-			.panel(panel)
-			.build();
-		clientToolbar.addNavigation(navigationButton);
-		setStatus(Status.STOPPED);
+		logsCut = 0;
+		woodcuttingXpGained = 0;
+		currentStatus = Status.STOPPED;
+
+		if (config.startScript())
+		{
+			startSession();
+		}
 	}
 
 	@Override
 	protected void shutDown()
 	{
-		running = false;
-		clientToolbar.removeNavigation(navigationButton);
 		overlayManager.remove(overlay);
-		setStatus(Status.STOPPED);
+		currentStatus = Status.STOPPED;
 	}
 
-	public void startScript()
+	private void startSession()
 	{
-		clientThread.invokeLater(() ->
+		actionDelay = 0;
+		tryBoothNext = true;
+		scriptStartedAt = System.nanoTime();
+		elapsedNanos = 0;
+		xpTracking = client.getGameState() == GameState.LOGGED_IN;
+		startingWoodcuttingXp = xpTracking ? client.getSkillExperience(Skill.WOODCUTTING) : 0;
+		woodcuttingXpGained = 0;
+		logsCut = 0;
+		previousLogCount = getInventoryLogCount(config.treeType());
+		currentStatus = Status.CHOPPING;
+	}
+
+	@Subscribe
+	public void onConfigChanged(ConfigChanged event)
+	{
+		if (!event.getGroup().equals("woodcutterscript"))
 		{
-			running = true;
+			return;
+		}
+
+		if ("startScript".equals(event.getKey()))
+		{
+			if (config.startScript())
+			{
+				startSession();
+			}
+			else
+			{
+				currentStatus = Status.STOPPED;
+			}
+		}
+		else if ("treeType".equals(event.getKey()))
+		{
+			previousLogCount = getInventoryLogCount(config.treeType());
 			actionDelay = 0;
 			tryBoothNext = true;
-			scriptStartedAt = System.nanoTime();
-			elapsedNanos = 0;
-			xpTracking = client.getGameState() == GameState.LOGGED_IN;
-			startingWoodcuttingXp = xpTracking ? client.getSkillExperience(Skill.WOODCUTTING) : 0;
-			woodcuttingXpGained = 0;
-			logsCut = 0;
-			previousLogCount = getInventoryLogCount(treeType);
-			updateMetrics();
-			setStatus(Status.CHOPPING);
-		});
-	}
-
-	public void stopScript()
-	{
-		clientThread.invokeLater(() ->
-		{
-			if (running)
+			if (config.startScript())
 			{
-				updateMetrics();
-				elapsedNanos = System.nanoTime() - scriptStartedAt;
+				currentStatus = Status.CHOPPING;
 			}
-			running = false;
-			actionDelay = 0;
-			updateMetrics();
-			setStatus(Status.STOPPED);
-		});
+		}
 	}
 
 	@Subscribe
 	public void onGameTick(GameTick event)
 	{
-		if (!running || client.getGameState() != GameState.LOGGED_IN)
+		if (!config.startScript() || client.getGameState() != GameState.LOGGED_IN)
 		{
+			currentStatus = Status.STOPPED;
 			return;
 		}
 
@@ -248,10 +237,11 @@ public class WoodcutterScriptPlugin extends Plugin
 			return;
 		}
 
+		TreeType treeType = config.treeType();
 		WorldPoint playerLocation = client.getLocalPlayer().getWorldLocation();
 		if (playerLocation.distanceTo(treeType.getBankLocation()) > BANK_RADIUS)
 		{
-			setStatus(Status.OUT_OF_AREA);
+			currentStatus = Status.OUT_OF_AREA;
 			return;
 		}
 
@@ -271,7 +261,7 @@ public class WoodcutterScriptPlugin extends Plugin
 
 			if (tryBoothNext && bankBooth != null)
 			{
-				setStatus(Status.WALKING_TO_BANK);
+				currentStatus = Status.WALKING_TO_BANK;
 				interactWithObject(bankBooth, BANK_ACTION, treeType.getBankTarget());
 				tryBoothNext = false;
 				actionDelay = 5;
@@ -280,7 +270,7 @@ public class WoodcutterScriptPlugin extends Plugin
 
 			if (banker != null)
 			{
-				setStatus(Status.WALKING_TO_BANK);
+				currentStatus = Status.WALKING_TO_BANK;
 				MenuAction bankAction = getBankerAction(banker);
 				client.menuAction(banker.getIndex(), 0, bankAction,
 					BANKER_ID, 0, BANK_ACTION, "Banker");
@@ -291,7 +281,7 @@ public class WoodcutterScriptPlugin extends Plugin
 
 			if (bankBooth != null)
 			{
-				setStatus(Status.WALKING_TO_BANK);
+				currentStatus = Status.WALKING_TO_BANK;
 				interactWithObject(bankBooth, BANK_ACTION, treeType.getBankTarget());
 				tryBoothNext = true;
 				actionDelay = 5;
@@ -304,18 +294,18 @@ public class WoodcutterScriptPlugin extends Plugin
 
 		if (client.getLocalPlayer().getAnimation() != -1)
 		{
-			setStatus(Status.CHOPPING);
+			currentStatus = Status.CHOPPING;
 			return;
 		}
 
 		GameObject tree = findNearestTree(playerLocation);
 		if (tree == null)
 		{
-			setStatus(Status.WAITING_FOR_TREE);
+			currentStatus = Status.WAITING_FOR_TREE;
 			return;
 		}
 
-		setStatus(Status.CHOPPING);
+		currentStatus = Status.CHOPPING;
 		interactWithObject(tree, CHOP_ACTION, treeType.getTreeName());
 		actionDelay = 4;
 	}
@@ -328,8 +318,8 @@ public class WoodcutterScriptPlugin extends Plugin
 			return;
 		}
 
-		int currentLogCount = getInventoryLogCount(treeType, event.getItemContainer());
-		if (running)
+		int currentLogCount = getInventoryLogCount(config.treeType(), event.getItemContainer());
+		if (config.startScript())
 		{
 			logsCut += Math.max(0, currentLogCount - previousLogCount);
 			updateMetrics();
@@ -409,13 +399,13 @@ public class WoodcutterScriptPlugin extends Plugin
 
 	private void walkTowardBank(WorldPoint playerLocation)
 	{
-		WorldPoint bankLocation = treeType.getBankLocation();
+		WorldPoint bankLocation = config.treeType().getBankLocation();
 		int dx = bankLocation.getX() - playerLocation.getX();
 		int dy = bankLocation.getY() - playerLocation.getY();
 		int distance = Math.max(Math.abs(dx), Math.abs(dy));
 		if (distance == 0)
 		{
-			setStatus(Status.WALKING_TO_BANK);
+			currentStatus = Status.WALKING_TO_BANK;
 			actionDelay = 2;
 			return;
 		}
@@ -428,12 +418,12 @@ public class WoodcutterScriptPlugin extends Plugin
 		LocalPoint localPoint = LocalPoint.fromWorld(client, stepLocation);
 		if (localPoint == null)
 		{
-			setStatus(Status.OUT_OF_AREA);
+			currentStatus = Status.OUT_OF_AREA;
 			actionDelay = 2;
 			return;
 		}
 
-		setStatus(Status.WALKING_TO_BANK);
+		currentStatus = Status.WALKING_TO_BANK;
 		client.menuAction(localPoint.getX(), localPoint.getY(), MenuAction.WALK, 0, 0, "", "");
 		actionDelay = 5;
 	}
@@ -441,19 +431,17 @@ public class WoodcutterScriptPlugin extends Plugin
 	@Subscribe
 	public void onGameStateChanged(GameStateChanged event)
 	{
-		if (event.getGameState() != GameState.LOGGED_IN && running)
+		if (event.getGameState() != GameState.LOGGED_IN && config.startScript())
 		{
 			updateMetrics();
 			elapsedNanos = System.nanoTime() - scriptStartedAt;
-			running = false;
-			updateMetrics();
-			setStatus(Status.STOPPED);
+			currentStatus = Status.STOPPED;
 		}
 	}
 
 	private GameObject findNearestTree(WorldPoint playerLocation)
 	{
-		return findNearestObject(Set.of(treeType.getTreeId()), playerLocation);
+		return findNearestObject(Set.of(config.treeType().getTreeId()), playerLocation);
 	}
 
 	private GameObject findNearestObject(Set<Integer> objectIds, WorldPoint playerLocation)
@@ -534,6 +522,7 @@ public class WoodcutterScriptPlugin extends Plugin
 
 	private void bankLogs()
 	{
+		TreeType treeType = config.treeType();
 		ItemContainer inventory = client.getItemContainer(InventoryID.INV);
 		if (inventory != null)
 		{
@@ -543,7 +532,7 @@ public class WoodcutterScriptPlugin extends Plugin
 				Item item = items[slot];
 				if (item != null && item.getId() == treeType.getLogId())
 				{
-					setStatus(Status.BANKING);
+					currentStatus = Status.BANKING;
 					client.menuAction(slot, WidgetInfo.BANK_INVENTORY_ITEMS_CONTAINER.getId(),
 						MenuAction.CC_OP_LOW_PRIORITY, DEPOSIT_ALL_OP, treeType.getLogId(),
 						"Deposit-All", treeType.getTreeName() + " logs");
@@ -556,22 +545,7 @@ public class WoodcutterScriptPlugin extends Plugin
 		closeBank();
 
 		actionDelay = 2;
-		setStatus(Status.CHOPPING);
-	}
-
-	public void setTreeType(TreeType treeType)
-	{
-		clientThread.invokeLater(() ->
-		{
-			this.treeType = treeType;
-			previousLogCount = getInventoryLogCount(treeType);
-			actionDelay = 0;
-			tryBoothNext = true;
-			if (running)
-			{
-				setStatus(Status.CHOPPING);
-			}
-		});
+		currentStatus = Status.CHOPPING;
 	}
 
 	private int getInventoryLogCount(TreeType type)
@@ -593,9 +567,14 @@ public class WoodcutterScriptPlugin extends Plugin
 		return count;
 	}
 
+	public int getCurrentInventoryLogs()
+	{
+		return getInventoryLogCount(config.treeType());
+	}
+
 	private void updateMetrics()
 	{
-		if (running)
+		if (config.startScript())
 		{
 			elapsedNanos = System.nanoTime() - scriptStartedAt;
 			if (client.getGameState() == GameState.LOGGED_IN)
@@ -612,12 +591,6 @@ public class WoodcutterScriptPlugin extends Plugin
 				}
 			}
 		}
-
-		WoodcutterScriptPanel currentPanel = panel;
-		if (currentPanel != null)
-		{
-			currentPanel.setMetrics(getFormattedUptime(), logsCut, woodcuttingXpGained);
-		}
 	}
 
 	public String getFormattedUptime()
@@ -631,7 +604,7 @@ public class WoodcutterScriptPlugin extends Plugin
 
 	public String getStatusLabel()
 	{
-		return currentStatus != null ? currentStatus.getLabel() : "Stopped";
+		return currentStatus != null ? currentStatus.getLabel() : "STOPPED";
 	}
 
 	private void closeBank()
@@ -698,27 +671,5 @@ public class WoodcutterScriptPlugin extends Plugin
 			}
 		}
 		return false;
-	}
-
-	private void setStatus(Status newStatus)
-	{
-		this.currentStatus = newStatus;
-		WoodcutterScriptPanel currentPanel = panel;
-		if (currentPanel != null)
-		{
-			currentPanel.setStatus(newStatus.getLabel());
-		}
-	}
-
-	private static BufferedImage createIcon()
-	{
-		BufferedImage icon = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
-		Graphics2D graphics = icon.createGraphics();
-		graphics.setColor(new Color(83, 135, 64));
-		graphics.fillOval(2, 1, 12, 10);
-		graphics.setColor(new Color(126, 82, 45));
-		graphics.fillRect(7, 9, 3, 6);
-		graphics.dispose();
-		return ImageUtil.resizeImage(icon, 16, 16);
 	}
 }
