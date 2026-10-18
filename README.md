@@ -1,92 +1,88 @@
-# RuneLite - Asennusohje
+# RuneLite - Idiot-proof Asennusohje (Komentokehote / CMD)
 
-Tämä opas neuvoo vaihe vaiheelta, mitä ohjelmia tarvitset ja miten asennat, käännät ja käynnistät asiakasohjelman omalla koneellasi.
-
----
-
-## 1. Esitiedot ja vaatimukset
-
-Ennen aloittamista varmista, että koneellesi on asennettu seuraavat kaksi työkalua:
-
-### 1.1 Java Development Kit (JDK 17 tai JDK 21 LTS)
-RuneLiten lähdekoodin kääntäminen vaatii täyden Java-kehitysympäristön (JDK). Pelkkä normaali Java (JRE) ei riitä.
-- Lataa ja asenna **Eclipse Temurin JDK 17 tai 21 (LTS)**:  
-  👉 [https://adoptium.net/temurin/releases/](https://adoptium.net/temurin/releases/)
-- **Tärkeää asennuksen aikana**: Laita rasti ruutuihin:
-  - *Set JAVA_HOME variable*
-  - *Add to PATH*
-- Tarkista asennuksen onnistuminen avaamalla PowerShell ja ajamalla:
-  ```powershell
-  java -version
-  javac -version
-  ```
-  *(Molemmat komennot tulisi tulostaa asennettu versionumero ilman virheitä.)*
-
-### 1.2 Git
-Versionhallintatyökalu koodin lataamiseen GitHubista:
-- Lataa ja asenna **Git for Windows**:  
-  👉 [https://git-scm.com/download/win](https://git-scm.com/download/win)
+Tämä opas neuvoo alusta loppuun, miten asennat ja käynnistät asiakasohjelman suoraan Windowsin **Komentokehotteesta (cmd)** ilman että sinun tarvitsee etsiä asennustiedostoja netistä.
 
 ---
 
-## 2. Asennus ja käyttöönotto (Step-by-Step)
+## Vaihe 0: Avaa Komentokehote (CMD)
+1. Paina näppäimistöltä **Windows-näppäin + R**.
+2. Kirjoita avautuvaan ruutuun `cmd` ja paina **Enter**.
+*(Musta komentorivi-ikkuna avautuu.)*
 
-### Vaihe 1: Kloonaa projekti omalle koneellesi
-Avaa PowerShell ja siirry kansioon, johon haluat projektin asentaa (esimerkiksi Työpöydälle):
-```powershell
-cd C:\Users\KÄYTTÄJÄNIMI\Desktop
+---
+
+## Vaihe 1: Asenna Java ja Git suoraan Komentokehotteesta
+
+Kopioi ja liitä seuraavat komennot Komentokehotteeseen yksi kerrallaan ja paina Enter:
+
+### 1.1 Asenna Java (Eclipse Temurin JDK 17)
+```cmd
+winget install --id EclipseAdoptium.Temurin.17.JDK -e --accept-package-agreements --accept-source-agreements
+```
+
+### 1.2 Asenna Git
+```cmd
+winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements
+```
+
+> ⚠️ **TÄRKEÄ VÄLIVAIHE**:  
+> Kun asennukset ovat valmiit, **sulje musta Komentokehote-ikkuna ja avaa se uudelleen** (Windows + R -> `cmd` -> Enter).  
+> Tämä on välttämätöntä, jotta Windows tunnistaa juuri asennetut komennot.
+
+Voit varmistaa asennuksen ajamalla:
+```cmd
+java -version
+git --version
+```
+*(Jos molemmat tulostavat versionumerot, kaikki on valmista seuraavaan vaiheeseen!)*
+
+---
+
+## Vaihe 2: Lataa projekti ja käännä koodi
+
+Kopioi ja aja nämä komennot Komentokehotteessa järjestyksessä:
+
+### 2.1 Siirry Työpöydälle ja lataa projekti GitHubista
+```cmd
+cd %USERPROFILE%\Desktop
 git clone https://github.com/nikomiettinen/runelite-niko-scripts.git
 cd runelite-niko-scripts
 ```
 
-### Vaihe 2: Käännä lähdekoodit
-Aja projektin päähakemistossa käännöskomento:
-```powershell
-.\gradlew.bat client:compileJava
+### 2.2 Käännä lähdekoodit
+```cmd
+gradlew.bat client:compileJava
 ```
-*Ensimmäisellä ajokerralla Gradle lataa tarvittavat riippuvuudet ja kirjastot automaattisesti taustalla. Käännöksen päätteeksi tulee ilmoitus `BUILD SUCCESSFUL`.*
+*(Ensimmäisellä kerralla tässä voi mennä 1–2 minuuttia kun tarvittavat tiedostot ladataan. Lopuksi lukee `BUILD SUCCESSFUL`.)*
 
-### Vaihe 3: Rakenna valmis paketti (ShadowJar)
-Luo valmis suoritettava JAR-paketti:
-```powershell
-.\gradlew.bat client:shadowJar
+### 2.3 Rakenna valmis ohjelmapaketti
+```cmd
+gradlew.bat client:shadowJar
 ```
-Tämä kokoaa valmiin paketin hakemistoon:  
-`runelite-client\build\libs\client-1.11.17-SNAPSHOT-shaded.jar`
 
 ---
 
-## 3. Clientin käynnistäminen
+## Vaihe 3: Käynnistä RuneLite
 
-Voit käynnistää peliclientin kummalla tahansa tavalla:
+Käynnistä peli komentokehotteesta suoraan komennolla:
 
-### Vaihtoehto A: Suoraan kehitystilassa (Gradlen kautta)
-```powershell
-.\gradlew.bat client:run
+```cmd
+gradlew.bat client:run
 ```
 
-### Vaihtoehto B: Valmiin Jar-paketin kautta
-```powershell
+*(Tai vaihtoehtoisesti valmiin jar-tiedoston kautta:)*
+```cmd
 java -jar runelite-client\build\libs\client-1.11.17-SNAPSHOT-shaded.jar --developer-mode
 ```
 
 ---
 
-## 4. Yleisimmät ongelmatilanteet (Troubleshooting)
+## Vaihe 4: Miten päivität koodin myöhemmin?
 
-### `'javac' is not recognized as an internal or external command`
-- Koneeltasi puuttuu JDK tai sen polkua ei ole lisätty Windowsin PATH-ympäristömuuttujaan.
-- Asenna JDK 17 tai 21 uudelleen ja varmista, että asennusvaiheessa on valittu *Set JAVA_HOME* ja *Add to PATH*. Käynnistä PowerShell uudelleen asennuksen jälkeen.
-
-### `PSSecurityException` / `ExecutionPolicy` estää `gradlew.bat`-skriptin ajon
-- Jos PowerShell estää skriptien ajamisen, anna lupa ajamalla komento:
-  ```powershell
-  Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-  ```
-
-### Miten päivitän koodin uusimpaan versioon GitHubista?
-```powershell
+Jos projektiin tulee päivityksiä GitHubissa, avaa Komentokehote, siirry kansioon ja aja:
+```cmd
+cd %USERPROFILE%\Desktop\runelite-niko-scripts
 git pull origin master
-.\gradlew.bat client:compileJava
-.\gradlew.bat client:shadowJar
+gradlew.bat client:compileJava
+gradlew.bat client:shadowJar
 ```
