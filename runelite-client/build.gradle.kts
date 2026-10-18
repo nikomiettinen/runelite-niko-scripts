@@ -204,3 +204,11 @@ tasks.withType<Test> {
 tasks.javadoc {
     title = "RuneLite Client ${project.version} API"
 }
+
+tasks.register<JavaExec>("run") {
+    group = "application"
+    description = "Runs the RuneLite client in developer mode"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("net.runelite.client.RuneLite")
+    args = listOf("--developer-mode")
+}
