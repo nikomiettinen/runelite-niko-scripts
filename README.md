@@ -1,6 +1,10 @@
-# RuneLite - Motherlode Mine Automation Client
+# RuneLite - Automation Client (Motherlode Mine & Woodcutter)
 
-Räätälöity RuneLite-asiakasohjelma, joka sisältää täysin automatisoidun **Motherlode Mine Script** -lisäosan Old School RuneScapeen.
+Räätälöity RuneLite-asiakasohjelma, joka sisältää kaksi täysin automatisoitua lisäosaa Old School RuneScapeen:
+1. **Motherlode Mine Script** - Täysautomaattinen louhinta, tunnelikivien poisto, hopper-syöttö ja malmien pankitus.
+2. **Woodcutter Script** - Täysautomaattinen puunhakkaaja (Powerchop / maahan pudotus tai pankitus).
+
+Molemmat lisäosat toimivat rinnakkain samassa RuneLitessä täysin toisistaan riippumattomina, ja niitä voi käyttää samalla asennuksella joko erikseen tai tilanteen mukaan.
 
 ---
 
@@ -8,8 +12,8 @@ Räätälöity RuneLite-asiakasohjelma, joka sisältää täysin automatisoidun 
 1. [Esitiedot ja asennusvaatimukset](#1-esitiedot-ja-asennusvaatimukset)
 2. [Asennus ja käyttöönotto (Step-by-Step)](#2-asennus-ja-käyttöönotto-step-by-step)
 3. [Clientin käynnistäminen](#3-clientin-käynnistäminen)
-4. [Motherlode Mine Script -lisäosan käyttö pelissä](#4-motherlode-mine-script--lisäosan-käyttö-pelissä)
-5. [Toimintalogiikka ja ominaisuudet](#5-toimintalogiikka-ja-ominaisuudet)
+4. [Motherlode Mine Script -lisäosan käyttö](#4-motherlode-mine-script--lisäosan-käyttö)
+5. [Woodcutter Script -lisäosan käyttö](#5-woodcutter-script--lisäosan-käyttö)
 6. [Yleisimmät ongelmatilanteet (FAQ & Troubleshooting)](#6-yleisimmät-ongelmatilanteet-faq--troubleshooting)
 
 ---
@@ -45,81 +49,70 @@ Avaa PowerShell ja siirry haluamaasi kansioon (esimerkiksi Työpöydälle):
 ```powershell
 cd C:\Users\KÄYTTÄJÄNIMI\Desktop
 git clone https://github.com/nikomiettinen/runelite-mlm-skripti.git
-cd runelite
+cd runelite-mlm-skripti
 ```
 
-*(Koska repositorio on yksityinen, Git pyytää kirjautumaan GitHub-tunnuksellasi tai käyttämään Personal Access Tokenia.)*
+### Vaihe 2: Käännä projekti
+Käännä Java-lähdekoodit ajamalla:
+```powershell
+.\gradlew.bat client:compileJava
+```
+Ensimmäisellä kerralla Gradle lataa tarvittavat riippuvuudet automaattisesti. Käännöksen tulisi päättyä tekstiin `BUILD SUCCESSFUL`.
+
+### Vaihe 3: Rakenna valmis paketti (ShadowJar)
+Luo valmis suoritettava JAR-paketti:
+```powershell
+.\gradlew.bat client:shadowJar
+```
+Tämä luo täysin pakatun asiakasohjelman hakemistoon:  
+`runelite-client\build\libs\client-<versio>-shaded.jar`
 
 ---
 
 ## 3. Clientin käynnistäminen
 
-Voit käynnistää clientin kahdella eri tavalla:
+Voit käynnistää peliclientin suoraan komentoriviltä kahdella tavalla:
 
-### Vaihtoehto A: Suora käynnistys Gradlella (Suositeltu kehitykseen ja testaukseen)
-Projektin mukana tulee Gradle Wrapper, joten sinun ei tarvitse asentaa Gradlea erikseen koneelle:
-
+### Tapa A: Gradlen kautta suoraan (Kehitystila)
 ```powershell
 .\gradlew.bat client:run
 ```
-*(Ensimmäisellä ajokerralla Gradle lataa tarvittavat riippuvuudet, minkä jälkeen RuneLite-asiakasohjelma avautuu automaattisesti kehittäjätilassa `--developer-mode`.)*
 
-### Vaihtoehto B: Valmiin JAR-paketin kääntäminen ja ajaminen
-Jos haluat paketoida clientin itsenäiseksi JAR-tiedostoksi:
+### Tapa B: Valmiin Jar-tiedoston kautta
 ```powershell
-# 1. Käännä valmis paketti
-.\gradlew.bat client:shadowJar
-
-# 2. Käynnistä käännetty JAR-paketti
-java -jar runelite-client\build\libs\client-1.13.3-SNAPSHOT-shaded.jar --developer-mode
+java -jar runelite-client\build\libs\client-1.11.17-SNAPSHOT-shaded.jar --developer-mode
 ```
 
 ---
 
-## 4. Motherlode Mine Script -lisäosan käyttö pelissä
+## 4. Motherlode Mine Script -lisäosan käyttö
 
-1. Kun RuneLite avautuu, kirjaudu sisään pelitilillesi Old School RuneScapeen.
-2. Matkusta hahmollasi **Motherlode Mineen** (Dwarven Mines / Falador).
-3. Avaa RuneLiten oikeasta sivupalkista jakoavain-ikoni (**Configuration / Plugin list**).
-4. Kirjoita hakukenttään: `Motherlode Mine Script`.
-5. Kytke lisäosa päälle liukukytkimestä.
-6. Avaa pluginin asetukset ratasikonista:
-   - **Start Script**: Käynnistää / pysäyttää automaattisen rutiinin.
-   - **Min Pay-dirt to Deposit**: Reppuraja talletukseen (oletus: `26`).
-   - **Bigger Sack Unlocked**: Kytke päälle vain, jos olet ostanut Prospector Percy'lta isomman säkin (tallettaa 7 reppua 4 sijaan ennen tyhjennystä).
-   - **Clear Rockfalls**: Hakkaa reitillä olevat tunnelikivet automaattisesti pois (oletus: `Päällä`).
-   - **Repair Struts**: Korjaa deposit hopperin vieressä olevan rikkinäisen vesirattaan tuen (oletus: `Päällä`).
-   - **Drop Gems**: Pudottaa louhinnasta saadut raa'at jalokivet automaattisesti maahan repun säästämiseksi (oletus: `Päällä`).
-   - **Mine Upstairs**: Valitse tämä, jos haluat botin kiipeävän tikkaita yläkerran tasanteelle louhimaan (oletus: `Pois`).
-
-Ruudun vasempaan yläkulmaan ilmestyy **Motherlode Mine Overlay**, josta näet reaaliajassa:
-- Nykyisen tilan (`Current State`)
-- Reppukohtaisen pay-dirtin määrän (`Pay-dirt: X / 26`)
-- Talletettujen reppujen laskurin (`Deposited Invs: X / 4`)
-- Säkin malmimäärän (`Sack Ore Count: X / 108`)
+1. Kirjaudu sisään hahmollasi ja siirry Motherlode Mineen.
+2. Avaa RuneLiten oikean reunan jakoavain-ikoni (**Configuration / Asetukset**).
+3. Etsi hakusanalla: `Motherlode Mine Script`.
+4. Ota lisäosa käyttöön kytkimestä.
+5. Avaa lisäosan asetukset (ratas-ikoni):
+   - **Käynnistä Motherlode Mine** -> Laita päälle (`ON`), kun haluat skriptin aloittavan louhinnan.
+   - **Minimipanos reppuun** -> Oletus `26` (tai `25` jos vasara tai gem bag on repussa).
+   - **Pura esteet (Rockfalls)** -> Pidä päällä (`ON`).
+6. Ruudun vasempaan yläkulmaan ilmestyy tilapaneeli, joka kertoo reaaliajassa hahmon tilan, repun sisällön ja säädetyn louhintatason.
 
 ---
 
-## 5. Toimintalogiikka ja ominaisuudet
+## 5. Woodcutter Script -lisäosan käyttö
 
-Lisäosa toteuttaa täydellisen syklin ilman manuaalista puuttumista:
-
-1. **Malmisuonten louhinta**:
-   - Hakkaa luoteisen alakerran malmisuonia (`3728, 5688`).
-   - Hakkaa kunkin suonen loppuun asti (odottaa suonen ehtymistä) ennen seuraavan klikkausta, välttäen turhia klikkauksia.
-   - Louhinnan aikana (repun ollessa 1–25) rockfalleja ei hakata turhaan.
-2. **Kulkureitin turvaus (Rockfall-logiikka)**:
-   - Tunnistaa tarkasti 3 kriittistä tunnelikiveä:
-     - Itäinen kivi (hopperin pääty): `(3733, 5680)`
-     - Keskimmäinen kivi: `(3731, 5683)`
-     - Läntinen kivi (luolan suu): `(3727, 5683)`
-   - Kun reppu on täynnä (`26/26`) tai tyhjä (`0/26`), hahmo hakkaa reitillä olevat kivet oikeassa järjestyksessä pois eikä koskaan harhaudu muualle kaivokseen.
-3. **Talletus hopperiin**:
-   - Vie pay-dirtit alakerran hopperiin (`3748, 5672`).
-   - Mikäli viereinen vesirattaan tuki (`3742, 5669`) on rikki, hakee tarvittaessa laatikosta vasaran ja korjaa vain tämän kyseisen lähimmän tuen.
-4. **Säkin tyhjennys & pankitus**:
-   - 4 täyden repun jälkeen (tai kirjautuessa sisään säkin sisältäessä malmeja) skripti kävelee säkille (`3748, 5659`), tyhjentää malmit, juoksee pankkiarkulle (`3759, 5664`) ja tallettaa malmit yhdellä klikkauksella.
-   - Säkin tyhjennyksen jälkeen palaa suoraan takaisin tunnelikivien kautta louhintahuoneeseen.
+1. Kirjaudu sisään hahmollasi ja mene minkä tahansa puiden lähelle (kirves kädessä tai repussa).
+2. Avaa RuneLiten oikean reunan jakoavain-ikoni (**Configuration / Asetukset**).
+3. Etsi hakusanalla: `Woodcutter Script`.
+4. Ota lisäosa käyttöön kytkimestä.
+5. Avaa lisäosan asetukset:
+   - **Käynnistä Woodcutter** -> Laita päälle (`ON`).
+   - **Puutyyppi** -> Valitse haluamasi puu (esim. `Normal Tree`, `Oak`, `Willow`, `Maple`, `Yew`, `Magic`, `Redwood` tai `Kaikki puut`).
+   - **Toimintatila** ->
+     - `Drop logs (Powerchop)`: pudottaa halot maahan repun täyttyessä (kirvestä, linnunpesiä tai cluita ei koskaan pudoteta).
+     - `Bank logs`: kävelee lähimmälle pankkitiskille/arkulle/pankkiirille ja tallettaa halot.
+   - **Maksimietäisyys**: Määritä kuinka monen laatan päästä hahmo hakee seuraavaa puuta (oletus: 15).
+6. Ruudun vasempaan yläkulmaan tulee paneeli, joka näyttää hakattujen halkojen määrän, tilan ja istunnon keston.
 
 ---
 
@@ -148,6 +141,3 @@ Lisäosa toteuttaa täydellisen syklin ilman manuaalista puuttumista:
   ```
 
 ---
-
-## Lisenssi
-Tämä projekti pohjautuu avoimen lähdekoodin RuneLite-asiakasohjelmaan (BSD 2-Clause License).
