@@ -1,4 +1,4 @@
-# RuneLite - Idiot-proof Asennusohje (Komentokehote / CMD)
+# RuneLite - Asennusohje (Komentokehote / CMD)
 
 Tämä opas neuvoo alusta loppuun, miten asennat ja käynnistät asiakasohjelman suoraan Windowsin **Komentokehotteesta (cmd)** ilman että sinun tarvitsee etsiä asennustiedostoja netistä.
 
