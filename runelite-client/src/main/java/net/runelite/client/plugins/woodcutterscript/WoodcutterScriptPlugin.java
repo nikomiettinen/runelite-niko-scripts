@@ -1,128 +1,130 @@
 /*
- * Copyright (c) 2026, Antigravity
+ * Copyright (c) 2026, RuneLite
  * All rights reserved.
  */
 package net.runelite.client.plugins.woodcutterscript;
 
-import com.google.common.collect.ImmutableSet;
 import com.google.inject.Provides;
-import java.time.Instant;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
 import java.util.Comparator;
-import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 import javax.inject.Inject;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
-import net.runelite.api.Constants;
 import net.runelite.api.GameObject;
 import net.runelite.api.GameState;
 import net.runelite.api.Item;
-import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.MenuAction;
 import net.runelite.api.NPC;
-import net.runelite.api.ObjectComposition;
-import net.runelite.api.Perspective;
-import net.runelite.api.Player;
+import net.runelite.api.Scene;
+import net.runelite.api.Skill;
 import net.runelite.api.Tile;
+import net.runelite.api.WidgetNode;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
-import net.runelite.api.events.ChatMessage;
-import net.runelite.api.events.GameObjectDespawned;
-import net.runelite.api.events.GameObjectSpawned;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
-import net.runelite.api.gameval.AnimationID;
+import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
+import net.runelite.api.gameval.ObjectID;
 import net.runelite.api.widgets.Widget;
+import net.runelite.api.widgets.WidgetInfo;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
-import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.ui.ClientToolbar;
+import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
+import net.runelite.client.util.ImageUtil;
 
 @Slf4j
 @PluginDescriptor(
 	name = "Woodcutter Script",
-	description = "Automaattinen puunhakkaaja (Powerchop ja Pankitus)",
-	tags = {"woodcutting", "wc", "bot", "script", "trees"},
+	description = "Chops selected trees and banks the logs",
+	tags = {"woodcutting", "oak", "yew", "magic", "bank", "script"},
 	enabledByDefault = false
 )
 public class WoodcutterScriptPlugin extends Plugin
 {
-	private static final Set<Integer> WOODCUTTING_ANIMS = ImmutableSet.of(
-		AnimationID.HUMAN_WOODCUTTING_BRONZE_AXE,
-		AnimationID.HUMAN_WOODCUTTING_IRON_AXE,
-		AnimationID.HUMAN_WOODCUTTING_STEEL_AXE,
-		AnimationID.HUMAN_WOODCUTTING_BLACK_AXE,
-		AnimationID.HUMAN_WOODCUTTING_MITHRIL_AXE,
-		AnimationID.HUMAN_WOODCUTTING_ADAMANT_AXE,
-		AnimationID.HUMAN_WOODCUTTING_RUNE_AXE,
-		AnimationID.HUMAN_WOODCUTTING_GILDED_AXE,
-		AnimationID.HUMAN_WOODCUTTING_DRAGON_AXE,
-		AnimationID.HUMAN_WOODCUTTING_TRAILBLAZER_AXE_NO_INFERNAL,
-		AnimationID.HUMAN_WOODCUTTING_INFERNAL_AXE,
-		AnimationID.HUMAN_WOODCUTTING_3A_AXE,
-		AnimationID.HUMAN_WOODCUTTING_CRYSTAL_AXE,
-		AnimationID.HUMAN_WOODCUTTING_TRAILBLAZER_RELOADED_AXE_NO_INFERNAL,
-		AnimationID.HUMAN_WOODCUTTING_TRAILBLAZER_AXE,
-		AnimationID.HUMAN_WOODCUTTING_TRAILBLAZER_RELOADED_AXE,
-		AnimationID.FORESTRY_2H_AXE_CHOPPING_BRONZE,
-		AnimationID.FORESTRY_2H_AXE_CHOPPING_IRON,
-		AnimationID.FORESTRY_2H_AXE_CHOPPING_STEEL,
-		AnimationID.FORESTRY_2H_AXE_CHOPPING_BLACK,
-		AnimationID.FORESTRY_2H_AXE_CHOPPING_MITHRIL,
-		AnimationID.FORESTRY_2H_AXE_CHOPPING_ADAMANT,
-		AnimationID.FORESTRY_2H_AXE_CHOPPING_RUNE,
-		AnimationID.FORESTRY_2H_AXE_CHOPPING_DRAGON,
-		AnimationID.FORESTRY_2H_AXE_CHOPPING_CRYSTAL,
-		AnimationID.FORESTRY_2H_AXE_CHOPPING_CRYSTAL_INACTIVE,
-		AnimationID.FORESTRY_2H_AXE_CHOPPING_3A
-	);
+	private static final int BANKER_ID = 2897;
+	private static final int INVENTORY_CAPACITY = 28;
+	private static final int BANK_RADIUS = 35;
+	private static final String CHOP_ACTION = "Chop down";
+	private static final String BANK_ACTION = "Bank";
+	private static final int DEPOSIT_ALL_OP = 8;
+	private static final int BANK_APPROACH_DISTANCE = 8;
 
-	private static final Set<Integer> PROTECTED_AXE_IDS = ImmutableSet.of(
-		ItemID.BRONZE_AXE,
-		ItemID.IRON_AXE,
-		ItemID.STEEL_AXE,
-		ItemID.BLACK_AXE,
-		ItemID.MITHRIL_AXE,
-		ItemID.ADAMANT_AXE,
-		ItemID.RUNE_AXE,
-		ItemID.DRAGON_AXE,
-		ItemID.INFERNAL_AXE,
-		ItemID._3A_AXE,
-		ItemID.TRAIL_GILDED_AXE,
-		ItemID.CRYSTAL_AXE,
-		ItemID.TRAILBLAZER_AXE,
-		ItemID.TRAILBLAZER_RELOADED_AXE,
-		ItemID.ZOMBIE_AXE
-	);
+	@Getter
+	public enum TreeType
+	{
+		OAK("Oak", "Varrock West", "Bank booth", 10820, ItemID.OAK_LOGS, Set.of(34810, 10583),
+			new WorldPoint(3185, 3441, 0)),
+		YEW("Yew", "Woodcutting Guild", "Bank chest", ObjectID.YEWTREE, ItemID.YEW_LOGS,
+			Set.of(ObjectID.WCGUILD_BANKCHEST), new WorldPoint(1592, 3475, 0)),
+		MAGIC("Magic", "Woodcutting Guild", "Bank chest", ObjectID.MAGICTREE, ItemID.MAGIC_LOGS,
+			Set.of(ObjectID.WCGUILD_BANKCHEST), new WorldPoint(1592, 3475, 0));
 
-	private static final Set<Integer> LOG_IDS = ImmutableSet.of(
-		ItemID.LOGS,
-		ItemID.OAK_LOGS,
-		ItemID.WILLOW_LOGS,
-		ItemID.MAPLE_LOGS,
-		ItemID.YEW_LOGS,
-		ItemID.MAGIC_LOGS,
-		ItemID.REDWOOD_LOGS,
-		ItemID.TEAK_LOGS,
-		ItemID.MAHOGANY_LOGS
-	);
+		private final String treeName;
+		private final String label;
+		private final String bankTarget;
+		private final int treeId;
+		private final int logId;
+		private final Set<Integer> bankObjectIds;
+		private final WorldPoint bankLocation;
+
+		TreeType(String treeName, String locationName, String bankTarget, int treeId, int logId,
+			Set<Integer> bankObjectIds, WorldPoint bankLocation)
+		{
+			this.treeName = treeName;
+			this.label = treeName + " - " + locationName;
+			this.bankTarget = bankTarget;
+			this.treeId = treeId;
+			this.logId = logId;
+			this.bankObjectIds = bankObjectIds;
+			this.bankLocation = bankLocation;
+		}
+
+		@Override
+		public String toString()
+		{
+			return label;
+		}
+	}
+
+	@Getter
+	public enum Status
+	{
+		STOPPED("Stopped"),
+		OUT_OF_AREA("Go to selected tree area"),
+		CHOPPING("Chopping tree"),
+		WAITING_FOR_TREE("Waiting for tree spawn"),
+		WALKING_TO_BANK("Walking to bank"),
+		BANKING("Banking");
+
+		private final String label;
+
+		Status(String label)
+		{
+			this.label = label;
+		}
+	}
 
 	@Inject
 	private Client client;
 
 	@Inject
-	private WoodcutterScriptConfig config;
+	private ClientThread clientThread;
+
+	@Inject
+	private ClientToolbar clientToolbar;
 
 	@Inject
 	private OverlayManager overlayManager;
@@ -131,22 +133,34 @@ public class WoodcutterScriptPlugin extends Plugin
 	private WoodcutterScriptOverlay overlay;
 
 	@Inject
-	private ClientThread clientThread;
+	private WoodcutterScriptConfig config;
+
+	@Inject
+	private WoodcutterScriptPanel panel;
+
+	private NavigationButton navigationButton;
 
 	@Getter
-	private WoodcutterScriptState currentState = WoodcutterScriptState.IDLE;
+	private volatile boolean running;
 
 	@Getter
-	private int logsCut = 0;
+	private volatile TreeType treeType = TreeType.OAK;
+
+	private int actionDelay;
+	private boolean tryBoothNext = true;
+	private long scriptStartedAt;
+	private long elapsedNanos;
+	private int startingWoodcuttingXp;
 
 	@Getter
-	private Instant startedAt;
+	private long woodcuttingXpGained;
 
-	private final Set<GameObject> trees = new HashSet<>();
-	private GameObject currentTreeTarget = null;
-	private int cooldownTicks = 0;
-	private int idleTicks = 0;
-	private WorldPoint lastPlayerLocation = null;
+	@Getter
+	private int logsCut;
+
+	private int previousLogCount;
+	private boolean xpTracking;
+	private Status currentStatus = Status.STOPPED;
 
 	@Provides
 	WoodcutterScriptConfig getConfig(ConfigManager configManager)
@@ -155,607 +169,556 @@ public class WoodcutterScriptPlugin extends Plugin
 	}
 
 	@Override
-	protected void startUp() throws Exception
+	protected void startUp()
 	{
 		overlayManager.add(overlay);
-		logsCut = 0;
-		currentState = WoodcutterScriptState.IDLE;
-		trees.clear();
-		currentTreeTarget = null;
-		cooldownTicks = 0;
-		idleTicks = 0;
-
-		if (config.startScript())
-		{
-			startedAt = Instant.now();
-		}
-
-		if (client.getGameState() == GameState.LOGGED_IN)
-		{
-			clientThread.invokeLater(this::scanScene);
-		}
+		panel.init(this);
+		navigationButton = NavigationButton.builder()
+			.tooltip("Woodcutter Script")
+			.priority(6)
+			.icon(createIcon())
+			.panel(panel)
+			.build();
+		clientToolbar.addNavigation(navigationButton);
+		setStatus(Status.STOPPED);
 	}
 
 	@Override
-	protected void shutDown() throws Exception
+	protected void shutDown()
 	{
+		running = false;
+		clientToolbar.removeNavigation(navigationButton);
 		overlayManager.remove(overlay);
-		trees.clear();
-		currentTreeTarget = null;
-		currentState = WoodcutterScriptState.IDLE;
-		startedAt = null;
+		setStatus(Status.STOPPED);
+	}
+
+	public void startScript()
+	{
+		clientThread.invokeLater(() ->
+		{
+			running = true;
+			actionDelay = 0;
+			tryBoothNext = true;
+			scriptStartedAt = System.nanoTime();
+			elapsedNanos = 0;
+			xpTracking = client.getGameState() == GameState.LOGGED_IN;
+			startingWoodcuttingXp = xpTracking ? client.getSkillExperience(Skill.WOODCUTTING) : 0;
+			woodcuttingXpGained = 0;
+			logsCut = 0;
+			previousLogCount = getInventoryLogCount(treeType);
+			updateMetrics();
+			setStatus(Status.CHOPPING);
+		});
+	}
+
+	public void stopScript()
+	{
+		clientThread.invokeLater(() ->
+		{
+			if (running)
+			{
+				updateMetrics();
+				elapsedNanos = System.nanoTime() - scriptStartedAt;
+			}
+			running = false;
+			actionDelay = 0;
+			updateMetrics();
+			setStatus(Status.STOPPED);
+		});
 	}
 
 	@Subscribe
-	public void onConfigChanged(ConfigChanged event)
+	public void onGameTick(GameTick event)
 	{
-		if (!event.getGroup().equals("woodcutterscript"))
+		if (!running || client.getGameState() != GameState.LOGGED_IN)
 		{
 			return;
 		}
 
-		if ("startScript".equals(event.getKey()))
+		updateMetrics();
+
+		if (actionDelay > 0)
 		{
-			if (config.startScript())
+			--actionDelay;
+			return;
+		}
+
+		if (client.getLocalPlayer() == null)
+		{
+			return;
+		}
+
+		WorldPoint playerLocation = client.getLocalPlayer().getWorldLocation();
+		if (playerLocation.distanceTo(treeType.getBankLocation()) > BANK_RADIUS)
+		{
+			setStatus(Status.OUT_OF_AREA);
+			return;
+		}
+
+		if (isBankOpen())
+		{
+			bankLogs();
+			return;
+		}
+
+		if (isInventoryFull())
+		{
+			GameObject bankBooth = findNearestObject(treeType.getBankObjectIds(), playerLocation);
+			NPC banker = client.getNpcs().stream()
+				.filter(npc -> npc.getId() == BANKER_ID)
+				.min(Comparator.comparingInt(npc -> npc.getWorldLocation().distanceTo(playerLocation)))
+				.orElse(null);
+
+			if (tryBoothNext && bankBooth != null)
 			{
-				startedAt = Instant.now();
-				logsCut = 0;
-				currentState = WoodcutterScriptState.IDLE;
-				if (client.getGameState() == GameState.LOGGED_IN)
+				setStatus(Status.WALKING_TO_BANK);
+				interactWithObject(bankBooth, BANK_ACTION, treeType.getBankTarget());
+				tryBoothNext = false;
+				actionDelay = 5;
+				return;
+			}
+
+			if (banker != null)
+			{
+				setStatus(Status.WALKING_TO_BANK);
+				MenuAction bankAction = getBankerAction(banker);
+				client.menuAction(banker.getIndex(), 0, bankAction,
+					BANKER_ID, 0, BANK_ACTION, "Banker");
+				tryBoothNext = true;
+				actionDelay = 5;
+				return;
+			}
+
+			if (bankBooth != null)
+			{
+				setStatus(Status.WALKING_TO_BANK);
+				interactWithObject(bankBooth, BANK_ACTION, treeType.getBankTarget());
+				tryBoothNext = true;
+				actionDelay = 5;
+				return;
+			}
+
+			walkTowardBank(playerLocation);
+			return;
+		}
+
+		if (client.getLocalPlayer().getAnimation() != -1)
+		{
+			setStatus(Status.CHOPPING);
+			return;
+		}
+
+		GameObject tree = findNearestTree(playerLocation);
+		if (tree == null)
+		{
+			setStatus(Status.WAITING_FOR_TREE);
+			return;
+		}
+
+		setStatus(Status.CHOPPING);
+		interactWithObject(tree, CHOP_ACTION, treeType.getTreeName());
+		actionDelay = 4;
+	}
+
+	@Subscribe
+	public void onItemContainerChanged(ItemContainerChanged event)
+	{
+		if (event.getItemContainer() != client.getItemContainer(InventoryID.INV))
+		{
+			return;
+		}
+
+		int currentLogCount = getInventoryLogCount(treeType, event.getItemContainer());
+		if (running)
+		{
+			logsCut += Math.max(0, currentLogCount - previousLogCount);
+			updateMetrics();
+		}
+		previousLogCount = currentLogCount;
+	}
+
+	private void interactWithObject(GameObject object, String option, String target)
+	{
+		String[] actions = client.getObjectDefinition(object.getId()).getActions();
+		MenuAction menuAction = MenuAction.GAME_OBJECT_FIRST_OPTION;
+		if (actions != null)
+		{
+			for (int i = 0; i < Math.min(actions.length, 5); i++)
+			{
+				if (option.equalsIgnoreCase(actions[i]))
 				{
-					clientThread.invokeLater(this::scanScene);
-				}
-			}
-			else
-			{
-				currentState = WoodcutterScriptState.IDLE;
-				currentTreeTarget = null;
-			}
-		}
-	}
-
-	@Subscribe
-	public void onChatMessage(ChatMessage event)
-	{
-		if (event.getType() != ChatMessageType.SPAM
-			&& event.getType() != ChatMessageType.GAMEMESSAGE
-			&& event.getType() != ChatMessageType.MESBOX)
-		{
-			return;
-		}
-
-		String msg = event.getMessage();
-		if (msg.startsWith("You get some ") || msg.startsWith("You get an ") || msg.startsWith("You get a "))
-		{
-			if (msg.contains("logs") || msg.contains("mushrooms") || msg.contains("bark"))
-			{
-				logsCut++;
-			}
-		}
-	}
-
-	@Subscribe
-	public void onGameStateChanged(GameStateChanged event)
-	{
-		if (event.getGameState() == GameState.LOGGED_IN || event.getGameState() == GameState.LOADING)
-		{
-			trees.clear();
-			currentTreeTarget = null;
-			clientThread.invokeLater(this::scanScene);
-		}
-		else if (event.getGameState() == GameState.LOGIN_SCREEN || event.getGameState() == GameState.HOPPING)
-		{
-			trees.clear();
-			currentTreeTarget = null;
-			currentState = WoodcutterScriptState.IDLE;
-		}
-	}
-
-	@Subscribe
-	public void onGameObjectSpawned(GameObjectSpawned event)
-	{
-		GameObject go = event.getGameObject();
-		if (isChoppableTree(go))
-		{
-			trees.add(go);
-		}
-	}
-
-	@Subscribe
-	public void onGameObjectDespawned(GameObjectDespawned event)
-	{
-		GameObject go = event.getGameObject();
-		trees.remove(go);
-		if (currentTreeTarget != null && currentTreeTarget.equals(go))
-		{
-			currentTreeTarget = null;
-		}
-	}
-
-	@Subscribe
-	public void onGameTick(GameTick tick)
-	{
-		if (!config.startScript() || client.getGameState() != GameState.LOGGED_IN)
-		{
-			currentState = WoodcutterScriptState.IDLE;
-			return;
-		}
-
-		Player localPlayer = client.getLocalPlayer();
-		if (localPlayer == null)
-		{
-			return;
-		}
-
-		if (cooldownTicks > 0)
-		{
-			cooldownTicks--;
-			return;
-		}
-
-		// Tarkistetaan inventory
-		ItemContainer inv = client.getItemContainer(InventoryID.INV);
-		boolean isFull = inv != null && inv.count() >= 28;
-
-		// 1. Käsitellään täysi reppu
-		if (isFull)
-		{
-			currentTreeTarget = null;
-
-			if (config.mode() == WoodcutterMode.DROP)
-			{
-				currentState = WoodcutterScriptState.DROPPING_LOGS;
-				dropLogs(inv);
-				return;
-			}
-			else if (config.mode() == WoodcutterMode.BANK)
-			{
-				handleBanking(localPlayer, inv);
-				return;
-			}
-		}
-
-		// 2. Hakkaustoiminta kun repussa on tilaa
-		int anim = localPlayer.getAnimation();
-		boolean isChoppingAnim = WOODCUTTING_ANIMS.contains(anim) || (anim != -1 && currentTreeTarget != null);
-
-		// Tarkistetaan onko nykyinen kohdepuu elossa
-		if (currentTreeTarget != null && !isTreeAlive(currentTreeTarget))
-		{
-			log.debug("Target tree died or turned into stump, finding new tree.");
-			currentTreeTarget = null;
-		}
-
-		if (isChoppingAnim && currentTreeTarget != null)
-		{
-			currentState = WoodcutterScriptState.CHOPPING;
-			idleTicks = 0;
-			return;
-		}
-
-		// Jos pelaaja liikkuu kohti puuta
-		WorldPoint playerLoc = localPlayer.getWorldLocation();
-		if (playerLoc != null && playerLoc.equals(lastPlayerLocation))
-		{
-			idleTicks++;
-		}
-		else
-		{
-			idleTicks = 0;
-			lastPlayerLocation = playerLoc;
-		}
-
-		// Jos meillä on kohdepuu ja pelaaja seisoo paikallaan eikä hakkaa
-		if (currentTreeTarget != null && idleTicks >= 3)
-		{
-			LocalPoint lp = currentTreeTarget.getLocalLocation();
-			if (lp != null && localPlayer.getLocalLocation().distanceTo(lp) <= 2 * Perspective.LOCAL_TILE_SIZE)
-			{
-				log.debug("Standing next to tree but not chopping, clicking again.");
-				chopTree(currentTreeTarget);
-				cooldownTicks = 2;
-				idleTicks = 0;
-				return;
-			}
-			else
-			{
-				// Stalled or unreachable tree
-				currentTreeTarget = null;
-			}
-		}
-
-		// Jos ei ole kohdepuuta tai se menetettiin, etsitään uusi
-		if (currentTreeTarget == null)
-		{
-			currentState = WoodcutterScriptState.FINDING_TREE;
-			GameObject bestTree = findBestTree(localPlayer);
-			if (bestTree != null)
-			{
-				currentTreeTarget = bestTree;
-				currentState = WoodcutterScriptState.MOVING_TO_TREE;
-				chopTree(bestTree);
-				cooldownTicks = 2;
-				idleTicks = 0;
-			}
-		}
-	}
-
-	private void dropLogs(ItemContainer inv)
-	{
-		Item[] items = inv.getItems();
-		int dropped = 0;
-
-		for (int slot = 0; slot < items.length; slot++)
-		{
-			Item item = items[slot];
-			if (item == null || item.getId() <= -1)
-			{
-				continue;
-			}
-
-			int itemId = item.getId();
-			if (isProtectedItem(itemId))
-			{
-				continue;
-			}
-
-			if (isDroppableLog(itemId))
-			{
-				client.menuAction(
-					slot,
-					InterfaceID.Inventory.ITEMS,
-					MenuAction.CC_OP_LOW_PRIORITY,
-					7, // Drop option
-					itemId,
-					"Drop",
-					""
-				);
-				dropped++;
-				if (dropped >= 2) // Pudotetaan 2 per tick sulavasti
-				{
+					menuAction = gameObjectMenuAction(i);
 					break;
 				}
 			}
 		}
 
-		cooldownTicks = 1;
+		client.menuAction(object.getSceneMinLocation().getX(), object.getSceneMinLocation().getY(),
+			menuAction, object.getId(), -1, option, target);
 	}
 
-	private boolean isProtectedItem(int itemId)
+	private MenuAction getBankerAction(NPC banker)
 	{
-		if (PROTECTED_AXE_IDS.contains(itemId))
+		String[] actions = client.getNpcDefinition(banker.getId()).getActions();
+		if (actions != null)
 		{
-			return true;
-		}
-		ItemComposition def = client.getItemDefinition(itemId);
-		if (def != null && def.getName() != null)
-		{
-			String name = def.getName().toLowerCase();
-			if (name.contains("axe") || name.contains("nest") || name.contains("clue") || name.contains("casket"))
+			for (int i = 0; i < Math.min(actions.length, 5); i++)
 			{
-				return true;
+				if (BANK_ACTION.equalsIgnoreCase(actions[i]))
+				{
+					return npcMenuAction(i);
+				}
 			}
 		}
-		return false;
+		return MenuAction.NPC_SECOND_OPTION;
 	}
 
-	private boolean isDroppableLog(int itemId)
+	private static MenuAction gameObjectMenuAction(int index)
 	{
-		if (LOG_IDS.contains(itemId))
+		switch (index)
 		{
-			return true;
+			case 1:
+				return MenuAction.GAME_OBJECT_SECOND_OPTION;
+			case 2:
+				return MenuAction.GAME_OBJECT_THIRD_OPTION;
+			case 3:
+				return MenuAction.GAME_OBJECT_FOURTH_OPTION;
+			case 4:
+				return MenuAction.GAME_OBJECT_FIFTH_OPTION;
+			default:
+				return MenuAction.GAME_OBJECT_FIRST_OPTION;
 		}
-		ItemComposition def = client.getItemDefinition(itemId);
-		if (def != null && def.getName() != null)
-		{
-			String name = def.getName().toLowerCase();
-			return name.endsWith("logs") || name.equals("logs") || name.equals("bark");
-		}
-		return false;
 	}
 
-	private void handleBanking(Player localPlayer, ItemContainer inv)
+	private static MenuAction npcMenuAction(int index)
 	{
-		// Tarkistetaan onko pankkiwidget auki
-		Widget depositInvWidget = client.getWidget(InterfaceID.Bankmain.DEPOSITINV);
-		if (depositInvWidget != null && !depositInvWidget.isHidden())
+		switch (index)
 		{
-			currentState = WoodcutterScriptState.BANKING;
-			client.menuAction(-1, InterfaceID.Bankmain.DEPOSITINV, MenuAction.CC_OP, 1, -1, "Deposit inventory", "");
-			cooldownTicks = 2;
+			case 1:
+				return MenuAction.NPC_SECOND_OPTION;
+			case 2:
+				return MenuAction.NPC_THIRD_OPTION;
+			case 3:
+				return MenuAction.NPC_FOURTH_OPTION;
+			case 4:
+				return MenuAction.NPC_FIFTH_OPTION;
+			default:
+				return MenuAction.NPC_FIRST_OPTION;
+		}
+	}
+
+	private void walkTowardBank(WorldPoint playerLocation)
+	{
+		WorldPoint bankLocation = treeType.getBankLocation();
+		int dx = bankLocation.getX() - playerLocation.getX();
+		int dy = bankLocation.getY() - playerLocation.getY();
+		int distance = Math.max(Math.abs(dx), Math.abs(dy));
+		if (distance == 0)
+		{
+			setStatus(Status.WALKING_TO_BANK);
+			actionDelay = 2;
 			return;
 		}
 
-		Widget depositBoxWidget = client.getWidget(InterfaceID.BankDepositbox.DEPOSIT_INV);
-		if (depositBoxWidget != null && !depositBoxWidget.isHidden())
+		int step = Math.min(BANK_APPROACH_DISTANCE, distance);
+		WorldPoint stepLocation = new WorldPoint(
+			playerLocation.getX() + dx * step / distance,
+			playerLocation.getY() + dy * step / distance,
+			playerLocation.getPlane());
+		LocalPoint localPoint = LocalPoint.fromWorld(client, stepLocation);
+		if (localPoint == null)
 		{
-			currentState = WoodcutterScriptState.BANKING;
-			client.menuAction(-1, InterfaceID.BankDepositbox.DEPOSIT_INV, MenuAction.CC_OP, 1, -1, "Deposit inventory", "");
-			cooldownTicks = 2;
+			setStatus(Status.OUT_OF_AREA);
+			actionDelay = 2;
 			return;
 		}
 
-		// Etsitään lähin pankkikohde
-		currentState = WoodcutterScriptState.WALKING_TO_BANK;
-		GameObject bankObject = findNearestBankObject(localPlayer);
-		if (bankObject != null)
-		{
-			LocalPoint lp = bankObject.getLocalLocation();
-			if (lp != null)
-			{
-				client.menuAction(
-					lp.getSceneX(),
-					lp.getSceneY(),
-					MenuAction.GAME_OBJECT_FIRST_OPTION,
-					bankObject.getId(),
-					0,
-					"Bank",
-					""
-				);
-				cooldownTicks = 3;
-				return;
-			}
-		}
+		setStatus(Status.WALKING_TO_BANK);
+		client.menuAction(localPoint.getX(), localPoint.getY(), MenuAction.WALK, 0, 0, "", "");
+		actionDelay = 5;
+	}
 
-		NPC banker = findNearestBanker(localPlayer);
-		if (banker != null)
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged event)
+	{
+		if (event.getGameState() != GameState.LOGGED_IN && running)
 		{
-			client.menuAction(
-				0,
-				0,
-				MenuAction.NPC_FIRST_OPTION,
-				banker.getIndex(),
-				0,
-				"Bank",
-				""
-			);
-			cooldownTicks = 3;
+			updateMetrics();
+			elapsedNanos = System.nanoTime() - scriptStartedAt;
+			running = false;
+			updateMetrics();
+			setStatus(Status.STOPPED);
 		}
 	}
 
-	private GameObject findNearestBankObject(Player localPlayer)
+	private GameObject findNearestTree(WorldPoint playerLocation)
 	{
-		Tile[][][] tiles = client.getScene().getTiles();
-		if (tiles == null)
+		return findNearestObject(Set.of(treeType.getTreeId()), playerLocation);
+	}
+
+	private GameObject findNearestObject(Set<Integer> objectIds, WorldPoint playerLocation)
+	{
+		Scene scene = client.getScene();
+		if (scene == null)
 		{
 			return null;
 		}
 
-		LocalPoint playerLoc = localPlayer.getLocalLocation();
-		int z = client.getPlane();
-		GameObject bestBank = null;
-		int bestDist = Integer.MAX_VALUE;
-
-		for (int x = 0; x < Constants.SCENE_SIZE; ++x)
+		Tile[][][] tiles = scene.getTiles();
+		if (client.getPlane() < 0 || client.getPlane() >= tiles.length)
 		{
-			for (int y = 0; y < Constants.SCENE_SIZE; ++y)
+			return null;
+		}
+
+		GameObject nearest = null;
+		int nearestDistance = Integer.MAX_VALUE;
+		for (Tile[] row : tiles[client.getPlane()])
+		{
+			for (Tile tile : row)
 			{
-				Tile tile = tiles[z][x][y];
 				if (tile == null)
 				{
 					continue;
 				}
 
-				GameObject[] gameObjects = tile.getGameObjects();
-				if (gameObjects == null)
+				GameObject[] objects = tile.getGameObjects();
+				if (objects == null)
 				{
 					continue;
 				}
 
-				for (GameObject go : gameObjects)
+				for (GameObject object : objects)
 				{
-					if (go == null)
+					if (object == null || !objectIds.contains(object.getId()))
 					{
 						continue;
 					}
 
-					ObjectComposition comp = client.getObjectDefinition(go.getId());
-					if (comp == null)
+					int distance = object.getWorldLocation().distanceTo(playerLocation);
+					if (distance < nearestDistance)
 					{
-						continue;
-					}
-					if (comp.getImpostorIds() != null)
-					{
-						comp = comp.getImpostor();
-						if (comp == null)
-						{
-							continue;
-						}
-					}
-
-					String name = comp.getName();
-					if (name == null)
-					{
-						continue;
-					}
-
-					String lower = name.toLowerCase();
-					if (lower.contains("bank booth") || lower.contains("bank chest") || lower.contains("bank counter") || lower.contains("grand exchange booth"))
-					{
-						int dist = playerLoc.distanceTo(go.getLocalLocation());
-						if (dist < bestDist)
-						{
-							bestDist = dist;
-							bestBank = go;
-						}
+						nearest = object;
+						nearestDistance = distance;
 					}
 				}
 			}
 		}
 
-		return bestBank;
+		return nearest;
 	}
 
-	private NPC findNearestBanker(Player localPlayer)
+	private boolean isInventoryFull()
 	{
-		LocalPoint playerLoc = localPlayer.getLocalLocation();
-		NPC bestNpc = null;
-		int bestDist = Integer.MAX_VALUE;
-
-		for (NPC npc : client.getNpcs())
-		{
-			if (npc == null || npc.getName() == null)
-			{
-				continue;
-			}
-			if (npc.getName().toLowerCase().contains("banker"))
-			{
-				int dist = playerLoc.distanceTo(npc.getLocalLocation());
-				if (dist < bestDist)
-				{
-					bestDist = dist;
-					bestNpc = npc;
-				}
-			}
-		}
-
-		return bestNpc;
-	}
-
-	private GameObject findBestTree(Player localPlayer)
-	{
-		LocalPoint playerLoc = localPlayer.getLocalLocation();
-		int maxDistTiles = config.maxDistance();
-		int maxDistLocal = maxDistTiles * Perspective.LOCAL_TILE_SIZE;
-
-		return trees.stream()
-			.filter(this::isTreeAlive)
-			.filter(t -> isTargetTreeType(t, config.treeType()))
-			.filter(t -> playerLoc.distanceTo(t.getLocalLocation()) <= maxDistLocal)
-			.min(Comparator.comparingInt(t -> playerLoc.distanceTo(t.getLocalLocation())))
-			.orElse(null);
-	}
-
-	private void chopTree(GameObject tree)
-	{
-		LocalPoint lp = tree.getLocalLocation();
-		if (lp == null)
-		{
-			return;
-		}
-
-		client.menuAction(
-			lp.getSceneX(),
-			lp.getSceneY(),
-			MenuAction.GAME_OBJECT_FIRST_OPTION,
-			tree.getId(),
-			0,
-			"Chop down",
-			""
-		);
-	}
-
-	private boolean isChoppableTree(GameObject go)
-	{
-		if (go == null)
+		ItemContainer inventory = client.getItemContainer(InventoryID.INV);
+		if (inventory == null || inventory.getItems().length < INVENTORY_CAPACITY)
 		{
 			return false;
 		}
 
-		ObjectComposition comp = client.getObjectDefinition(go.getId());
-		if (comp == null)
+		Item[] items = inventory.getItems();
+		for (int slot = 0; slot < INVENTORY_CAPACITY; slot++)
 		{
-			return false;
-		}
-		if (comp.getImpostorIds() != null)
-		{
-			comp = comp.getImpostor();
-			if (comp == null)
+			if (items[slot] == null || items[slot].getId() == -1)
 			{
 				return false;
 			}
 		}
+		return true;
+	}
 
-		String name = comp.getName();
-		if (name == null || name.equalsIgnoreCase("null") || name.isEmpty())
-		{
-			return false;
-		}
+	private boolean isBankOpen()
+	{
+		Widget bankItemContainer = client.getWidget(WidgetInfo.BANK_ITEM_CONTAINER);
+		return bankItemContainer != null && !bankItemContainer.isHidden();
+	}
 
-		if (name.toLowerCase().contains("stump"))
+	private void bankLogs()
+	{
+		ItemContainer inventory = client.getItemContainer(InventoryID.INV);
+		if (inventory != null)
 		{
-			return false;
-		}
-
-		String[] actions = comp.getActions();
-		if (actions == null)
-		{
-			return false;
-		}
-
-		for (String action : actions)
-		{
-			if (action != null && (action.equalsIgnoreCase("Chop down") || action.equalsIgnoreCase("Chop")))
+			Item[] items = inventory.getItems();
+			for (int slot = 0; slot < items.length; slot++)
 			{
-				return true;
+				Item item = items[slot];
+				if (item != null && item.getId() == treeType.getLogId())
+				{
+					setStatus(Status.BANKING);
+					client.menuAction(slot, WidgetInfo.BANK_INVENTORY_ITEMS_CONTAINER.getId(),
+						MenuAction.CC_OP_LOW_PRIORITY, DEPOSIT_ALL_OP, treeType.getLogId(),
+						"Deposit-All", treeType.getTreeName() + " logs");
+					actionDelay = 2;
+					return;
+				}
 			}
 		}
 
+		closeBank();
+
+		actionDelay = 2;
+		setStatus(Status.CHOPPING);
+	}
+
+	public void setTreeType(TreeType treeType)
+	{
+		clientThread.invokeLater(() ->
+		{
+			this.treeType = treeType;
+			previousLogCount = getInventoryLogCount(treeType);
+			actionDelay = 0;
+			tryBoothNext = true;
+			if (running)
+			{
+				setStatus(Status.CHOPPING);
+			}
+		});
+	}
+
+	private int getInventoryLogCount(TreeType type)
+	{
+		ItemContainer inventory = client.getItemContainer(InventoryID.INV);
+		return inventory == null ? 0 : getInventoryLogCount(type, inventory);
+	}
+
+	private static int getInventoryLogCount(TreeType type, ItemContainer inventory)
+	{
+		int count = 0;
+		for (Item item : inventory.getItems())
+		{
+			if (item != null && item.getId() == type.getLogId())
+			{
+				count += item.getQuantity();
+			}
+		}
+		return count;
+	}
+
+	private void updateMetrics()
+	{
+		if (running)
+		{
+			elapsedNanos = System.nanoTime() - scriptStartedAt;
+			if (client.getGameState() == GameState.LOGGED_IN)
+			{
+				int currentXp = client.getSkillExperience(Skill.WOODCUTTING);
+				if (xpTracking)
+				{
+					woodcuttingXpGained = Math.max(0, currentXp - startingWoodcuttingXp);
+				}
+				else
+				{
+					startingWoodcuttingXp = currentXp;
+					xpTracking = true;
+				}
+			}
+		}
+
+		WoodcutterScriptPanel currentPanel = panel;
+		if (currentPanel != null)
+		{
+			currentPanel.setMetrics(getFormattedUptime(), logsCut, woodcuttingXpGained);
+		}
+	}
+
+	public String getFormattedUptime()
+	{
+		long elapsedSeconds = elapsedNanos / 1_000_000_000L;
+		long hours = elapsedSeconds / 3600;
+		long minutes = elapsedSeconds / 60 % 60;
+		long seconds = elapsedSeconds % 60;
+		return String.format("%02d:%02d:%02d", hours, minutes, seconds);
+	}
+
+	public String getStatusLabel()
+	{
+		return currentStatus != null ? currentStatus.getLabel() : "Stopped";
+	}
+
+	private void closeBank()
+	{
+		Widget bankContainer = client.getWidget(WidgetInfo.BANK_CONTAINER);
+		if (clickCloseButton(bankContainer))
+		{
+			return;
+		}
+
+		for (WidgetNode node : client.getComponentTable())
+		{
+			if (node.getId() == InterfaceID.BANKMAIN)
+			{
+				client.closeInterface(node, true);
+				return;
+			}
+		}
+	}
+
+	private boolean clickCloseButton(Widget widget)
+	{
+		if (widget == null)
+		{
+			return false;
+		}
+
+		String[] actions = widget.getActions();
+		if (actions != null)
+		{
+			for (int i = 0; i < actions.length; i++)
+			{
+				if ("Close".equalsIgnoreCase(actions[i]))
+				{
+					Object[] onOpListener = widget.getOnOpListener();
+					if (onOpListener != null)
+					{
+						client.createScriptEventBuilder(onOpListener)
+							.setSource(widget)
+							.setOp(i + 1)
+							.build()
+							.setCanSendPackets(true)
+							.run();
+					}
+					else
+					{
+						client.menuAction(-1, widget.getId(), MenuAction.CC_OP, i + 1,
+							-1, actions[i], "");
+					}
+					return true;
+				}
+			}
+		}
+
+		Widget[] children = widget.getNestedChildren();
+		if (children != null)
+		{
+			for (Widget child : children)
+			{
+				if (clickCloseButton(child))
+				{
+					return true;
+				}
+			}
+		}
 		return false;
 	}
 
-	private boolean isTargetTreeType(GameObject go, WoodcutterTreeType type)
+	private void setStatus(Status newStatus)
 	{
-		if (go == null)
+		this.currentStatus = newStatus;
+		WoodcutterScriptPanel currentPanel = panel;
+		if (currentPanel != null)
 		{
-			return false;
+			currentPanel.setStatus(newStatus.getLabel());
 		}
-
-		ObjectComposition comp = client.getObjectDefinition(go.getId());
-		if (comp == null)
-		{
-			return false;
-		}
-		if (comp.getImpostorIds() != null)
-		{
-			comp = comp.getImpostor();
-			if (comp == null)
-			{
-				return false;
-			}
-		}
-
-		String name = comp.getName();
-		return type.matches(name);
 	}
 
-	private boolean isTreeAlive(GameObject go)
+	private static BufferedImage createIcon()
 	{
-		return isChoppableTree(go);
-	}
-
-	private void scanScene()
-	{
-		trees.clear();
-		Tile[][][] tiles = client.getScene().getTiles();
-		if (tiles == null)
-		{
-			return;
-		}
-
-		int z = client.getPlane();
-		for (int x = 0; x < Constants.SCENE_SIZE; ++x)
-		{
-			for (int y = 0; y < Constants.SCENE_SIZE; ++y)
-			{
-				Tile tile = tiles[z][x][y];
-				if (tile == null)
-				{
-					continue;
-				}
-
-				GameObject[] gameObjects = tile.getGameObjects();
-				if (gameObjects != null)
-				{
-					for (GameObject go : gameObjects)
-					{
-						if (go != null && isChoppableTree(go))
-						{
-							trees.add(go);
-						}
-					}
-				}
-			}
-		}
+		BufferedImage icon = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = icon.createGraphics();
+		graphics.setColor(new Color(83, 135, 64));
+		graphics.fillOval(2, 1, 12, 10);
+		graphics.setColor(new Color(126, 82, 45));
+		graphics.fillRect(7, 9, 3, 6);
+		graphics.dispose();
+		return ImageUtil.resizeImage(icon, 16, 16);
 	}
 }

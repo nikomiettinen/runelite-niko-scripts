@@ -7,8 +7,6 @@ package net.runelite.client.plugins.woodcutterscript;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
-import java.time.Duration;
-import java.time.Instant;
 import javax.inject.Inject;
 import net.runelite.client.ui.overlay.OverlayPanel;
 import net.runelite.client.ui.overlay.OverlayPosition;
@@ -32,12 +30,17 @@ public class WoodcutterScriptOverlay extends OverlayPanel
 	@Override
 	public Dimension render(Graphics2D graphics)
 	{
+		if (!config.showOverlay())
+		{
+			return null;
+		}
+
 		panelComponent.getChildren().add(TitleComponent.builder()
 			.text("Woodcutter Script")
 			.color(Color.GREEN)
 			.build());
 
-		boolean running = config.startScript();
+		boolean running = plugin.isRunning();
 		panelComponent.getChildren().add(LineComponent.builder()
 			.left("Tila:")
 			.right(running ? "PÄÄLLÄ" : "POIS")
@@ -45,21 +48,15 @@ public class WoodcutterScriptOverlay extends OverlayPanel
 			.build());
 
 		panelComponent.getChildren().add(LineComponent.builder()
-			.left("Toiminta:")
-			.right(plugin.getCurrentState().getStatusName())
+			.left("Status:")
+			.right(plugin.getStatusLabel())
 			.rightColor(Color.WHITE)
 			.build());
 
 		panelComponent.getChildren().add(LineComponent.builder()
-			.left("Puu:")
-			.right(config.treeType().getDisplayName())
+			.left("Kohde:")
+			.right(plugin.getTreeType().getLabel())
 			.rightColor(Color.YELLOW)
-			.build());
-
-		panelComponent.getChildren().add(LineComponent.builder()
-			.left("Moodi:")
-			.right(config.mode().getName())
-			.rightColor(Color.CYAN)
 			.build());
 
 		panelComponent.getChildren().add(LineComponent.builder()
@@ -68,14 +65,17 @@ public class WoodcutterScriptOverlay extends OverlayPanel
 			.rightColor(Color.LIGHT_GRAY)
 			.build());
 
-		if (running && plugin.getStartedAt() != null)
+		panelComponent.getChildren().add(LineComponent.builder()
+			.left("XP saatu:")
+			.right(String.format("%,d", plugin.getWoodcuttingXpGained()))
+			.rightColor(Color.CYAN)
+			.build());
+
+		if (running)
 		{
-			Duration duration = Duration.between(plugin.getStartedAt(), Instant.now());
-			long s = duration.getSeconds();
-			String timeStr = String.format("%02d:%02d:%02d", s / 3600, (s % 3600) / 60, (s % 60));
 			panelComponent.getChildren().add(LineComponent.builder()
 				.left("Aika:")
-				.right(timeStr)
+				.right(plugin.getFormattedUptime())
 				.rightColor(Color.LIGHT_GRAY)
 				.build());
 		}
