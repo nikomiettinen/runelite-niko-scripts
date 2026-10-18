@@ -35,8 +35,8 @@ Versionhallintatyökalu koodin lataamiseen GitHubista:
 Avaa PowerShell ja siirry kansioon, johon haluat projektin asentaa (esimerkiksi Työpöydälle):
 ```powershell
 cd C:\Users\KÄYTTÄJÄNIMI\Desktop
-git clone https://github.com/nikomiettinen/runelite-mlm-skripti.git
-cd runelite-mlm-skripti
+git clone https://github.com/nikomiettinen/runelite-niko-scripts.git
+cd runelite-niko-scripts
 ```
 
 ### Vaihe 2: Käännä lähdekoodit
