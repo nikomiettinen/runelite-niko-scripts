@@ -44,7 +44,7 @@ Versionhallintatyökalu koodin lataamiseen ja päivittämiseen.
 Avaa PowerShell ja siirry haluamaasi kansioon (esimerkiksi Työpöydälle):
 ```powershell
 cd C:\Users\KÄYTTÄJÄNIMI\Desktop
-git clone https://github.com/nikomiettinen/runelite.git
+git clone https://github.com/nikomiettinen/runelite-mlm-skripti.git
 cd runelite
 ```
 
