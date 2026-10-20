@@ -101,6 +101,7 @@ public class MotherlodeScriptPlugin extends Plugin
 
 	// The exact world location of the Motherlode Mine ore sack
 	private static final WorldPoint SACK_LOCATION = new WorldPoint(3748, 5659, 0);
+	private static final WorldPoint LOWER_HOPPER_LOCATION = new WorldPoint(3748, 5673, 0);
 
 	// The broken strut closest to the deposit hopper (User attachment: World 3742, 5669, 0 / Region 14936, local 30, 37)
 	private static final WorldPoint HOPPER_STRUT_LOCATION = new WorldPoint(3742, 5669, 0);
@@ -112,14 +113,18 @@ public class MotherlodeScriptPlugin extends Plugin
 	private static final Set<Integer> LADDERS_BOTTOM = ImmutableSet.of(
 		ObjectID.MOTHERLODE_LADDER_BOTTOM,
 		ObjectID.MOTHERLODE_LADDER_BOTTOM_ACTIVE,
-		ObjectID.MOTHERLODE_LADDER_BOTTOM_INACTIVE
+		ObjectID.MOTHERLODE_LADDER_BOTTOM_INACTIVE,
+		19044, 19047, 19048
 	);
 
 	private static final Set<Integer> LADDERS_TOP = ImmutableSet.of(
 		ObjectID.MOTHERLODE_LADDER_TOP,
 		ObjectID.MOTHERLODE_LADDER_TOP_ACTIVE,
-		ObjectID.MOTHERLODE_LADDER_TOP_INACTIVE
+		ObjectID.MOTHERLODE_LADDER_TOP_INACTIVE,
+		19045, 19049, 19050
 	);
+
+	private static final WorldPoint LADDER_BOTTOM_LOCATION = new WorldPoint(3755, 5675, 0);
 
 	private static final int UPPER_FLOOR_HEIGHT = -490;
 	private static final int SACK_NORMAL_CAPACITY = 108;
@@ -325,6 +330,35 @@ public class MotherlodeScriptPlugin extends Plugin
 			shouldEmptySackOnStart = false;
 			depositedInventories = 0;
 		}
+		else if (msg.contains("reach that") || msg.contains("can't reach that") || msg.contains("cannot reach that"))
+		{
+			log.info("Received 'I can't reach that!' message in chat.");
+			if (config.clearRockfalls())
+			{
+				Player localPlayer = client.getLocalPlayer();
+				if (localPlayer != null)
+				{
+					GameObject rock = findAdjacentRockfall(localPlayer);
+					if (rock == null && currentVeinTarget != null)
+					{
+						rock = findRockfallBetween(localPlayer, currentVeinTarget);
+					}
+					if (rock != null)
+					{
+						log.info("Mining blocking rockfall at {} after 'can't reach that'!", rock.getWorldLocation());
+						currentVeinTarget = null;
+						currentRockfallTarget = rock;
+						currentState = ScriptState.CLEARING_ROCKFALL;
+						interactObject(rock, "Mine", "Rockfall");
+						cooldownTicks = 3;
+						idleMiningTicks = 0;
+						return;
+					}
+				}
+			}
+			currentVeinTarget = null;
+			idleMiningTicks = 0;
+		}
 	}
 
 	@Subscribe
@@ -409,7 +443,7 @@ public class MotherlodeScriptPlugin extends Plugin
 		}
 
 		// Ensure objects are populated if missed during load
-		if (sacks.isEmpty() || lowerHopper == null)
+		if (veins.isEmpty())
 		{
 			scanScene();
 		}
@@ -477,6 +511,12 @@ public class MotherlodeScriptPlugin extends Plugin
 
 		boolean targetUpstairs = config.upperFloor();
 		boolean playerUpstairs = isUpstairs(localPlayer.getLocalLocation());
+
+		// When mining upstairs and player is downstairs, never target any rockfalls
+		if (targetUpstairs && !playerUpstairs)
+		{
+			currentRockfallTarget = null;
+		}
 
 		// 1. Drop uncut gems if enabled (ONLY when NOT actively mining a vein so animation is never interrupted!)
 		if (config.dropGems() && currentVeinTarget == null && localPlayer.getAnimation() == -1)
@@ -571,12 +611,13 @@ public class MotherlodeScriptPlugin extends Plugin
 		}
 
 		// A: Active Rockfall mining check - MUST complete current rockfall action before doing anything else!
-		// BUT NEVER mine rockfalls if player is in the middle of a mining run (e.g. 7/26 paydirt)!
 		if (currentRockfallTarget != null)
 		{
-			if (currentPayDirt > 0 && !inventoryFullOfPayDirt)
+			boolean isUpstairsRock = isUpstairs(currentRockfallTarget);
+			if (isUpstairsRock != playerUpstairs || (targetUpstairs && !playerUpstairs))
 			{
-				log.info("Cancelling active rockfall target because player is in the middle of mining veins (pay-dirt: {})", currentPayDirt);
+				log.info("Cancelling rockfall target on wrong floor or downstairs with upper floor enabled (rock upstairs: {}, player upstairs: {})",
+					isUpstairsRock, playerUpstairs);
 				currentRockfallTarget = null;
 				idleMiningTicks = 0;
 			}
@@ -599,10 +640,10 @@ public class MotherlodeScriptPlugin extends Plugin
 				}
 
 				idleMiningTicks++;
+				currentState = ScriptState.CLEARING_ROCKFALL;
 				// Stay on this rockfall until destroyed; re-click if idle between swings for 3+ ticks
 				if (idleMiningTicks >= 3)
 				{
-					currentState = ScriptState.CLEARING_ROCKFALL;
 					interactObject(currentRockfallTarget, "Mine", "Rockfall");
 					cooldownTicks = 3;
 					idleMiningTicks = 0;
@@ -667,25 +708,7 @@ public class MotherlodeScriptPlugin extends Plugin
 				}
 				else
 				{
-					// Player is NOT at the vein (vein is far away, e.g. navigating from sack/bank)
-					// If returning from hopper/sack/bank (currentPayDirt == 0), check for the 3 tunnel rockfalls!
-					if (currentPayDirt == 0 && !targetUpstairs && config.clearRockfalls())
-					{
-						GameObject tunnelRock = findBlockingTunnelRockfall(localPlayer, false);
-						if (tunnelRock != null)
-						{
-							log.info("Path to distant vein blocked by tunnel rockfall at {}! Mining rockfall first.", tunnelRock.getWorldLocation());
-							currentVeinTarget = null;
-							currentRockfallTarget = tunnelRock;
-							currentState = ScriptState.CLEARING_ROCKFALL;
-							interactObject(tunnelRock, "Mine", "Rockfall");
-							cooldownTicks = 3;
-							idleMiningTicks = 0;
-							return;
-						}
-					}
-
-					// Moving towards the vein
+					// Moving towards the vein - never interrupt while moving!
 					if (localPlayer.getAnimation() != -1 || isMoving)
 					{
 						currentState = ScriptState.MINING_VEIN;
@@ -697,7 +720,42 @@ public class MotherlodeScriptPlugin extends Plugin
 					idleMiningTicks++;
 					if (idleMiningTicks >= 2)
 					{
-						log.info("Player stopped moving before reaching vein (stalled). Clearing vein target to re-evaluate route/rockfalls.");
+						if (config.clearRockfalls())
+						{
+							GameObject blockingRock = findAdjacentRockfall(localPlayer);
+							if (blockingRock == null)
+							{
+								blockingRock = findRockfallBetween(localPlayer, currentVeinTarget);
+							}
+							if (blockingRock != null)
+							{
+								log.info("Blocked by rockfall at {} while trying to reach vein! Mining rockfall to pass.", blockingRock.getWorldLocation());
+								currentVeinTarget = null;
+								currentRockfallTarget = blockingRock;
+								currentState = ScriptState.CLEARING_ROCKFALL;
+								interactObject(blockingRock, "Mine", "Rockfall");
+								cooldownTicks = 3;
+								idleMiningTicks = 0;
+								return;
+							}
+							// If downstairs and blocked by tunnel rockfall, mine it to pass!
+							if (!playerUpstairs && !config.upperFloor())
+							{
+								GameObject tunnelRock = findBlockingTunnelRockfall(localPlayer, false);
+								if (tunnelRock != null)
+								{
+									log.info("Blocked by tunnel rockfall at {} while trying to reach vein! Mining rockfall to pass.", tunnelRock.getWorldLocation());
+									currentVeinTarget = null;
+									currentRockfallTarget = tunnelRock;
+									currentState = ScriptState.CLEARING_ROCKFALL;
+									interactObject(tunnelRock, "Mine", "Rockfall");
+									cooldownTicks = 3;
+									idleMiningTicks = 0;
+									return;
+								}
+							}
+						}
+						log.info("Player stopped moving before reaching vein (stalled). Clearing vein target to re-evaluate route.");
 						currentVeinTarget = null;
 						idleMiningTicks = 0;
 					}
@@ -721,57 +779,77 @@ public class MotherlodeScriptPlugin extends Plugin
 		{
 			currentVeinTarget = null;
 
-			if (targetUpstairs)
+			boolean canUseUpperHopper = config.upperFloor() && config.upperHopperUnlocked() && upperHopper != null;
+
+			if (playerUpstairs)
 			{
-				if (playerUpstairs)
+				if (canUseUpperHopper)
 				{
-					if (upperHopper != null)
+					if (config.clearRockfalls())
 					{
-						currentState = ScriptState.DEPOSITING_HOPPER;
-						interactObject(upperHopper, "Deposit", "Hopper");
-						cooldownTicks = 3;
-						return;
+						GameObject blockingRock = findAdjacentUpstairsRockfall(localPlayer);
+						if (blockingRock != null)
+						{
+							currentState = ScriptState.CLEARING_ROCKFALL;
+							currentRockfallTarget = blockingRock;
+							interactObject(blockingRock, "Mine", "Rockfall");
+							cooldownTicks = 3;
+							return;
+						}
 					}
-					else
-					{
-						currentState = ScriptState.CLIMBING_LADDER_DOWN;
-						climbLadderDown(localPlayer);
-						return;
-					}
+
+					currentState = ScriptState.DEPOSITING_HOPPER;
+					interactObject(upperHopper, "Deposit", "Hopper");
+					cooldownTicks = 3;
+					return;
 				}
-			}
-			else
-			{
-				if (playerUpstairs)
+				else
 				{
+					// Upper hopper not unlocked or not available: climb down ladder to use lower hopper!
+					if (config.clearRockfalls())
+					{
+						GameObject blockingRock = findAdjacentUpstairsRockfall(localPlayer);
+						if (blockingRock != null)
+						{
+							currentState = ScriptState.CLEARING_ROCKFALL;
+							currentRockfallTarget = blockingRock;
+							interactObject(blockingRock, "Mine", "Rockfall");
+							cooldownTicks = 3;
+							return;
+						}
+					}
+
 					currentState = ScriptState.CLIMBING_LADDER_DOWN;
 					climbLadderDown(localPlayer);
 					return;
 				}
 			}
 
-			// Downstairs hopper handling
-			GameObject activeHopper = (targetUpstairs && playerUpstairs && upperHopper != null) ? upperHopper : lowerHopper;
+			// Downstairs hopper handling (player is downstairs)
+			// Clear rockfalls blocking downstairs tunnel to hopper ONLY if mining downstairs!
+			// When upper floor is enabled, player came downstairs ONLY to deposit at lower hopper, NEVER go to northwest tunnel rockfalls!
+			if (config.clearRockfalls() && !config.upperFloor())
+			{
+				// Always check the closest blocking tunnel rockfall first!
+				GameObject tunnelRock = findBlockingTunnelRockfall(localPlayer, true);
+				if (tunnelRock != null)
+				{
+					log.info("Heading to deposit hopper: clearing blocking tunnel rockfall at {}", tunnelRock.getWorldLocation());
+					currentState = ScriptState.CLEARING_ROCKFALL;
+					currentRockfallTarget = tunnelRock;
+					interactObject(tunnelRock, "Mine", "Rockfall");
+					cooldownTicks = 3;
+					return;
+				}
+			}
+
+			GameObject activeHopper = lowerHopper != null ? lowerHopper : findHopper(false);
 			if (activeHopper != null)
 			{
-				// Clear rockfalls blocking downstairs tunnel to hopper ONLY when inventory is full!
-				if (config.clearRockfalls() && !playerUpstairs)
-				{
-					// Always check the closest blocking tunnel rockfall first!
-					GameObject tunnelRock = findBlockingTunnelRockfall(localPlayer, true);
-					if (tunnelRock != null)
-					{
-						currentState = ScriptState.CLEARING_ROCKFALL;
-						currentRockfallTarget = tunnelRock;
-						interactObject(tunnelRock, "Mine", "Rockfall");
-						cooldownTicks = 3;
-						return;
-					}
-				}
 
 				// When downstairs near hopper, check and repair ONLY the 1 broken strut closest to the deposit hopper (tile 3742, 5669, 0)
 				GameObject targetStrut = findHopperStrut();
-				if (config.repairStruts() && targetStrut != null && !playerUpstairs
+				if (config.repairStruts() && targetStrut != null
 					&& localPlayer.getLocalLocation().distanceTo(activeHopper.getLocalLocation()) <= 12 * Perspective.LOCAL_TILE_SIZE)
 				{
 					boolean hasHammer = inventory.contains(ItemID.HAMMER);
@@ -847,12 +925,14 @@ public class MotherlodeScriptPlugin extends Plugin
 		// 6. Navigate to target floor for mining (Only use upper floor if enabled in settings)
 		if (targetUpstairs && !playerUpstairs)
 		{
+			currentRockfallTarget = null;
 			currentState = ScriptState.CLIMBING_LADDER_UP;
 			climbLadderUp(localPlayer);
 			return;
 		}
 		else if (!targetUpstairs && playerUpstairs)
 		{
+			currentRockfallTarget = null;
 			currentState = ScriptState.CLIMBING_LADDER_DOWN;
 			climbLadderDown(localPlayer);
 			return;
@@ -874,43 +954,47 @@ public class MotherlodeScriptPlugin extends Plugin
 			return;
 		}
 
-		// 7. Clear rockfalls downstairs ONLY when returning from hopper/bank/sack towards the vein room!
-		// STRICT CONDITION: MUST be coming from hopper with 0 pay-dirt (currentPayDirt == 0)!
-		// Strictly targets ONLY the 3 user-specified tunnel rockfalls (East: 3733,5680, Mid: 3731,5683, West: 3727,5683)!
-		boolean returningFromHopper = !targetUpstairs && currentPayDirt == 0 && !isInsideVeinRoom(localPlayer);
-
-		if (config.clearRockfalls() && returningFromHopper && currentVeinTarget == null)
+		// 7. Mine ore vein (ONLY if not already mining a vein)
+		// When downstairs: check if tunnel rockfalls block passage to the preferred vein room ONLY when starting/entering with 0 pay-dirt!
+		if (!targetUpstairs && !playerUpstairs && config.clearRockfalls())
 		{
-			// Check the 3 tunnel rockfalls blocking return path to vein room
-			GameObject tunnelRock = findBlockingTunnelRockfall(localPlayer, false);
-			if (tunnelRock != null)
+			if (!isInsideVeinRoom(localPlayer) && currentPayDirt == 0)
 			{
-				currentState = ScriptState.CLEARING_ROCKFALL;
-				currentRockfallTarget = tunnelRock;
-				interactObject(tunnelRock, "Mine", "Rockfall");
-				cooldownTicks = 3;
-				return;
-			}
-		}
-
-		// 8. Mine ore vein (ONLY if not already mining a vein, and path is clear!)
-		// If returning from hopper/sack downstairs, ensure the 3 tunnel rockfalls are destroyed before clicking distant veins!
-		if (!targetUpstairs && currentPayDirt == 0 && !isInsideVeinRoom(localPlayer) && config.clearRockfalls())
-		{
-			GameObject tunnelRock = findBlockingTunnelRockfall(localPlayer, false);
-			if (tunnelRock != null)
-			{
-				currentState = ScriptState.CLEARING_ROCKFALL;
-				currentRockfallTarget = tunnelRock;
-				interactObject(tunnelRock, "Mine", "Rockfall");
-				cooldownTicks = 3;
-				return;
+				GameObject tunnelRock = findBlockingTunnelRockfall(localPlayer, false);
+				if (tunnelRock != null)
+				{
+					currentState = ScriptState.CLEARING_ROCKFALL;
+					currentRockfallTarget = tunnelRock;
+					interactObject(tunnelRock, "Mine", "Rockfall");
+					cooldownTicks = 3;
+					return;
+				}
 			}
 		}
 
 		WallObject nearestVein = findBestVein(localPlayer.getLocalLocation(), targetUpstairs);
 		if (currentVeinTarget == null && nearestVein != null)
 		{
+			if (config.clearRockfalls())
+			{
+				GameObject blockingRock = findAdjacentRockfall(localPlayer);
+				if (blockingRock == null)
+				{
+					blockingRock = findRockfallBetween(localPlayer, nearestVein);
+				}
+				if (blockingRock != null)
+				{
+					log.info("Path to vein is blocked by rockfall at {}! Mining rockfall first.", blockingRock.getWorldLocation());
+					currentState = ScriptState.CLEARING_ROCKFALL;
+					currentRockfallTarget = blockingRock;
+					currentVeinTarget = null;
+					interactObject(blockingRock, "Mine", "Rockfall");
+					cooldownTicks = 3;
+					idleMiningTicks = 0;
+					return;
+				}
+			}
+
 			currentState = ScriptState.MINING_VEIN;
 			currentVeinTarget = nearestVein;
 			log.debug("Mining vein {} at ({}, {})", nearestVein.getId(), nearestVein.getLocalLocation().getSceneX(), nearestVein.getLocalLocation().getSceneY());
@@ -953,18 +1037,20 @@ public class MotherlodeScriptPlugin extends Plugin
 	 */
 	private GameObject findBlockingTunnelRockfall(Player localPlayer, boolean headingToHopper)
 	{
-		LocalPoint playerLoc = localPlayer.getLocalLocation();
-		WorldPoint playerWorld = localPlayer.getWorldLocation();
-		if (playerWorld == null)
+		if (localPlayer == null || !config.clearRockfalls())
 		{
 			return null;
 		}
 
-		GameObject targetHopper = lowerHopper != null ? lowerHopper : upperHopper;
-		WorldPoint hopperWorld = targetHopper != null ? targetHopper.getWorldLocation() : null;
+		LocalPoint playerLoc = localPlayer.getLocalLocation();
+		WorldPoint playerWorld = localPlayer.getWorldLocation();
+		if (playerWorld == null || isUpstairs(playerLoc))
+		{
+			return null;
+		}
 
 		List<GameObject> activeTunnelRocks = rockfalls.stream()
-			.filter(this::isAnyTunnelRock)
+			.filter(r -> !isUpstairs(r) && !isBlacklistedRockfall(r) && isAnyTunnelRock(r))
 			.collect(Collectors.toList());
 
 		if (activeTunnelRocks.isEmpty())
@@ -972,39 +1058,206 @@ public class MotherlodeScriptPlugin extends Plugin
 			return null;
 		}
 
+		// Immediate obstacle check: if the player is directly adjacent to ANY active tunnel rockfall (within 2 tiles),
+		// it is physically blocking movement!
+		GameObject adjacentRock = activeTunnelRocks.stream()
+			.filter(r -> playerLoc.distanceTo(r.getLocalLocation()) <= 2 * Perspective.LOCAL_TILE_SIZE)
+			.min(Comparator.comparingInt(r -> playerLoc.distanceTo(r.getLocalLocation())))
+			.orElse(null);
+
+		if (adjacentRock != null)
+		{
+			return adjacentRock;
+		}
+
 		if (headingToHopper)
 		{
-			// Heading to hopper: filter rocks that are in front of player (between player and hopper)
-			int playerDistToHopper = hopperWorld != null ? playerWorld.distanceTo(hopperWorld) : 999;
-
-			return activeTunnelRocks.stream()
-				.filter(r -> {
-					int rockDistToHopper = hopperWorld != null ? r.getWorldLocation().distanceTo(hopperWorld) : 10;
-					// Rock must be between player and hopper (closer to hopper than player)
-					return rockDistToHopper <= playerDistToHopper;
-				})
-				// Crucial: ALWAYS pick the rock closest to the player so we never skip a rock in front!
-				.min(Comparator.comparingInt(r -> playerLoc.distanceTo(r.getLocalLocation())))
-				.orElse(null);
+			// Heading to hopper: Player travels East from vein room (X ~ 3726) to hopper (X ~ 3748)
+			// Progression order: West -> Mid -> East
+			if (isInsideVeinRoom(localPlayer) || playerWorld.getX() <= 3728)
+			{
+				GameObject west = activeTunnelRocks.stream().filter(this::isTunnelRockWest).findFirst().orElse(null);
+				if (west != null) return west;
+				GameObject mid = activeTunnelRocks.stream().filter(this::isTunnelRockMid).findFirst().orElse(null);
+				if (mid != null) return mid;
+				GameObject east = activeTunnelRocks.stream().filter(this::isTunnelRockEast).findFirst().orElse(null);
+				if (east != null) return east;
+				return activeTunnelRocks.stream().min(Comparator.comparingInt(r -> playerLoc.distanceTo(r.getLocalLocation()))).orElse(null);
+			}
+			else if (playerWorld.getX() <= 3731)
+			{
+				// Past West rockfall; next is Mid, then East
+				GameObject mid = activeTunnelRocks.stream().filter(this::isTunnelRockMid).findFirst().orElse(null);
+				if (mid != null) return mid;
+				GameObject east = activeTunnelRocks.stream().filter(this::isTunnelRockEast).findFirst().orElse(null);
+				if (east != null) return east;
+				return null;
+			}
+			else if (playerWorld.getX() <= 3733)
+			{
+				// Past Mid rockfall; next is East
+				GameObject east = activeTunnelRocks.stream().filter(this::isTunnelRockEast).findFirst().orElse(null);
+				if (east != null) return east;
+				return null;
+			}
+			// Past East rockfall (X >= 3734); in hopper area
+			return null;
 		}
 		else
 		{
-			// Heading to veins: filter rocks that are in front of player (between player and preferred veins)
-			int playerDistToVeins = playerWorld.distanceTo(PREFERRED_MINING_AREA);
-
-			return activeTunnelRocks.stream()
-				.filter(r -> {
-					int rockDistToVeins = r.getWorldLocation().distanceTo(PREFERRED_MINING_AREA);
-					// Rock must be between player and veins (closer to veins than player)
-					return rockDistToVeins <= playerDistToVeins;
-				})
-				// Crucial: ALWAYS pick the rock closest to the player so we never skip a rock in front!
-				.min(Comparator.comparingInt(r -> playerLoc.distanceTo(r.getLocalLocation())))
-				.orElse(null);
+			// Heading to veins: Player travels West from hopper (X ~ 3748) to vein room (X ~ 3726)
+			// Progression order: East -> Mid -> West
+			if (playerWorld.getX() >= 3734)
+			{
+				GameObject east = activeTunnelRocks.stream().filter(this::isTunnelRockEast).findFirst().orElse(null);
+				if (east != null) return east;
+				GameObject mid = activeTunnelRocks.stream().filter(this::isTunnelRockMid).findFirst().orElse(null);
+				if (mid != null) return mid;
+				GameObject west = activeTunnelRocks.stream().filter(this::isTunnelRockWest).findFirst().orElse(null);
+				if (west != null) return west;
+				return null;
+			}
+			else if (playerWorld.getX() >= 3732)
+			{
+				// Past East rockfall; next is Mid, then West
+				GameObject mid = activeTunnelRocks.stream().filter(this::isTunnelRockMid).findFirst().orElse(null);
+				if (mid != null) return mid;
+				GameObject west = activeTunnelRocks.stream().filter(this::isTunnelRockWest).findFirst().orElse(null);
+				if (west != null) return west;
+				return null;
+			}
+			else if (playerWorld.getX() >= 3729)
+			{
+				// Past Mid rockfall; next is West
+				GameObject west = activeTunnelRocks.stream().filter(this::isTunnelRockWest).findFirst().orElse(null);
+				if (west != null) return west;
+				return null;
+			}
+			// Inside or at entrance to vein room; no more tunnel rockfalls block veins
+			return null;
 		}
 	}
 
-	private boolean isTunnelRockWest(GameObject r)
+	/**
+	 * Finds any upstairs rockfall blocking the way or close to the player.
+	 * If destination is given, finds rockfalls between player and destination.
+	 */
+	/**
+	 * Finds an active rockfall on the player's current floor directly adjacent to the player (within ~2.5 tiles)
+	 * that physically blocks movement or pathing.
+	 */
+	private GameObject findAdjacentRockfall(Player localPlayer)
+	{
+		if (localPlayer == null || !config.clearRockfalls())
+		{
+			return null;
+		}
+		LocalPoint playerLoc = localPlayer.getLocalLocation();
+		if (playerLoc == null)
+		{
+			return null;
+		}
+		boolean upstairs = isUpstairs(playerLoc);
+		return rockfalls.stream()
+			.filter(r -> isUpstairs(r) == upstairs)
+			.filter(r -> playerLoc.distanceTo(r.getLocalLocation()) <= 320)
+			.min(Comparator.comparingInt(r -> playerLoc.distanceTo(r.getLocalLocation())))
+			.orElse(null);
+	}
+
+	private GameObject findAdjacentUpstairsRockfall(Player localPlayer)
+	{
+		return findAdjacentRockfall(localPlayer);
+	}
+
+	/**
+	 * Finds an active rockfall on the same floor located between the player and the target vein.
+	 */
+	private GameObject findRockfallBetween(Player localPlayer, WallObject vein)
+	{
+		if (localPlayer == null || vein == null || !config.clearRockfalls())
+		{
+			return null;
+		}
+		LocalPoint pLoc = localPlayer.getLocalLocation();
+		LocalPoint vLoc = vein.getLocalLocation();
+		if (pLoc == null || vLoc == null)
+		{
+			return null;
+		}
+		boolean upstairs = isUpstairs(pLoc);
+		int distPV = pLoc.distanceTo(vLoc);
+
+		return rockfalls.stream()
+			.filter(r -> isUpstairs(r) == upstairs)
+			.filter(r -> {
+				LocalPoint rLoc = r.getLocalLocation();
+				if (rLoc == null)
+				{
+					return false;
+				}
+				int distPR = pLoc.distanceTo(rLoc);
+				int distRV = rLoc.distanceTo(vLoc);
+				// Rock is within 5 tiles of player and closer to the vein than player is
+				return distPR <= 5 * Perspective.LOCAL_TILE_SIZE && distRV < distPV;
+			})
+			.min(Comparator.comparingInt(r -> pLoc.distanceTo(r.getLocalLocation())))
+			.orElse(null);
+	}
+
+	private GameObject findUpstairsRockfall(Player localPlayer, LocalPoint destination)
+	{
+		if (localPlayer == null || !config.clearRockfalls())
+		{
+			return null;
+		}
+
+		LocalPoint playerLoc = localPlayer.getLocalLocation();
+		if (playerLoc == null)
+		{
+			return null;
+		}
+
+		List<GameObject> upstairsRocks = rockfalls.stream()
+			.filter(this::isUpstairs)
+			.collect(Collectors.toList());
+
+		if (upstairsRocks.isEmpty())
+		{
+			return null;
+		}
+
+		// If player is standing right next to an upstairs rockfall (within 3 tiles), it is blocking the player!
+		GameObject adjacentRock = upstairsRocks.stream()
+			.filter(r -> playerLoc.distanceTo(r.getLocalLocation()) <= 3 * Perspective.LOCAL_TILE_SIZE)
+			.min(Comparator.comparingInt(r -> playerLoc.distanceTo(r.getLocalLocation())))
+			.orElse(null);
+
+		if (adjacentRock != null)
+		{
+			return adjacentRock;
+		}
+
+		if (destination != null)
+		{
+			int distToDest = playerLoc.distanceTo(destination);
+			return upstairsRocks.stream()
+				.filter(r -> {
+					int rockToDest = r.getLocalLocation().distanceTo(destination);
+					int rockToPlayer = playerLoc.distanceTo(r.getLocalLocation());
+					return (rockToDest < distToDest && rockToPlayer < distToDest) || rockToPlayer <= 4 * Perspective.LOCAL_TILE_SIZE;
+				})
+				.min(Comparator.comparingInt(r -> playerLoc.distanceTo(r.getLocalLocation())))
+				.orElse(null);
+		}
+
+		return upstairsRocks.stream()
+			.filter(r -> playerLoc.distanceTo(r.getLocalLocation()) <= 10 * Perspective.LOCAL_TILE_SIZE)
+			.min(Comparator.comparingInt(r -> playerLoc.distanceTo(r.getLocalLocation())))
+			.orElse(null);
+	}
+
+		private boolean isTunnelRockWest(GameObject r)
 	{
 		if (r == null)
 		{
@@ -1015,12 +1268,9 @@ public class MotherlodeScriptPlugin extends Plugin
 		{
 			return false;
 		}
-		return (Math.abs(wp.getX() - TUNNEL_ROCK_WEST_X) <= 1 && Math.abs(wp.getY() - TUNNEL_ROCK_WEST_Y) <= 1)
-			|| (wp.getRegionID() == BLACKLISTED_REGION_ID && Math.abs(wp.getRegionX() - TUNNEL_ROCK_WEST_REGIONX()) <= 1 && Math.abs(wp.getRegionY() - TUNNEL_ROCK_WEST_REGIONY()) <= 1);
+		return (wp.getX() >= 3725 && wp.getX() <= 3728 && wp.getY() >= 5681 && wp.getY() <= 5685)
+			|| (Math.abs(wp.getX() - TUNNEL_ROCK_WEST_X) <= 1 && Math.abs(wp.getY() - TUNNEL_ROCK_WEST_Y) <= 1);
 	}
-
-	private int TUNNEL_ROCK_WEST_REGIONX() { return TUNNEL_ROCK_WEST_REGION_X; }
-	private int TUNNEL_ROCK_WEST_REGIONY() { return TUNNEL_ROCK_WEST_REGION_Y; }
 
 	private boolean isTunnelRockMid(GameObject r)
 	{
@@ -1033,8 +1283,8 @@ public class MotherlodeScriptPlugin extends Plugin
 		{
 			return false;
 		}
-		return (Math.abs(wp.getX() - TUNNEL_ROCK_MID_X) <= 1 && Math.abs(wp.getY() - TUNNEL_ROCK_MID_Y) <= 1)
-			|| (wp.getRegionID() == BLACKLISTED_REGION_ID && Math.abs(wp.getRegionX() - TUNNEL_ROCK_MID_REGION_X) <= 1 && Math.abs(wp.getRegionY() - TUNNEL_ROCK_MID_REGION_Y) <= 1);
+		return (wp.getX() >= 3729 && wp.getX() <= 3731 && wp.getY() >= 5681 && wp.getY() <= 5685)
+			|| (Math.abs(wp.getX() - TUNNEL_ROCK_MID_X) <= 1 && Math.abs(wp.getY() - TUNNEL_ROCK_MID_Y) <= 1);
 	}
 
 	private boolean isTunnelRockEast(GameObject r)
@@ -1048,8 +1298,8 @@ public class MotherlodeScriptPlugin extends Plugin
 		{
 			return false;
 		}
-		return (Math.abs(wp.getX() - TUNNEL_ROCK_EAST_X) <= 1 && Math.abs(wp.getY() - TUNNEL_ROCK_EAST_Y) <= 1)
-			|| (wp.getRegionID() == BLACKLISTED_REGION_ID && Math.abs(wp.getRegionX() - TUNNEL_ROCK_EAST_REGION_X) <= 1 && Math.abs(wp.getRegionY() - TUNNEL_ROCK_EAST_REGION_Y) <= 1);
+		return (wp.getX() >= 3732 && wp.getX() <= 3736 && wp.getY() >= 5678 && wp.getY() <= 5685)
+			|| (Math.abs(wp.getX() - TUNNEL_ROCK_EAST_X) <= 1 && Math.abs(wp.getY() - TUNNEL_ROCK_EAST_Y) <= 1);
 	}
 
 	private boolean isAnyTunnelRock(GameObject r)
@@ -1058,13 +1308,17 @@ public class MotherlodeScriptPlugin extends Plugin
 		{
 			return false;
 		}
-		if (isBlacklistedRockfall(r))
+		if (isBlacklistedRockfall(r) || isUpstairs(r))
 		{
 			return false;
 		}
-		// Strictly match ONLY the 3 user-specified tunnel rockfalls:
-		// East (3733, 5680), Mid (3731, 5683), West (3727, 5683)
-		return isTunnelRockWest(r) || isTunnelRockMid(r) || isTunnelRockEast(r);
+		WorldPoint wp = r.getWorldLocation();
+		if (wp == null)
+		{
+			return false;
+		}
+		return (wp.getX() >= 3725 && wp.getX() <= 3736 && wp.getY() >= 5678 && wp.getY() <= 5685)
+			|| isTunnelRockWest(r) || isTunnelRockMid(r) || isTunnelRockEast(r);
 	}
 
 	/**
@@ -1140,6 +1394,13 @@ public class MotherlodeScriptPlugin extends Plugin
 			return false;
 		}
 
+		// NEVER trigger failsafe in the middle of mining veins when inventory is not full!
+		// Only trigger when inventory is full and stuck on the way to the hopper.
+		if (!inventoryFull)
+		{
+			return false;
+		}
+
 		// Only protect vein target if player is actually standing at the vein!
 		if (currentVeinTarget != null)
 		{
@@ -1150,73 +1411,41 @@ public class MotherlodeScriptPlugin extends Plugin
 			}
 		}
 
-		// Only mine rockfalls if going to hopper (inventoryFull) OR returning from hopper/bank with empty inventory (currentPayDirt == 0)
-		if (!inventoryFull && currentPayDirt > 0)
+		// Universal rockfall failsafe: if stuck for 3+ ticks near any rockfall on current floor, clear it!
+		if (config.clearRockfalls() && stuckTicks >= 3 && !rockfalls.isEmpty())
 		{
-			return false;
-		}
-
-		if (stuckTicks < 4 || rockfalls.isEmpty())
-		{
-			return false;
-		}
-
-		// First check tunnel rockfalls
-		if (!isUpstairs(localPlayer.getLocalLocation()) && config.clearRockfalls())
-		{
-			GameObject tunnelRock = findBlockingTunnelRockfall(localPlayer, inventoryFull);
-			if (tunnelRock != null)
+			GameObject blockingRock = findAdjacentRockfall(localPlayer);
+			if (blockingRock != null)
 			{
-				log.info("Failsafe triggered: clearing closest blocking tunnel rockfall at {}", tunnelRock.getWorldLocation());
+				log.info("Failsafe triggered: stuck adjacent to rockfall at {}, mining it.", blockingRock.getWorldLocation());
 				currentState = ScriptState.CLEARING_ROCKFALL;
-				currentRockfallTarget = tunnelRock;
-				interactObject(tunnelRock, "Mine", "Rockfall");
+				currentRockfallTarget = blockingRock;
+				currentVeinTarget = null;
+				interactObject(blockingRock, "Mine", "Rockfall");
 				cooldownTicks = 3;
 				stuckTicks = 0;
 				return true;
 			}
 		}
 
-		LocalPoint playerLoc = localPlayer.getLocalLocation();
-		List<GameObject> nearbyRocks = rockfalls.stream()
-			.filter(r -> !isBlacklistedRockfall(r))
-			.filter(r -> playerLoc.distanceTo(r.getLocalLocation()) <= 8 * Perspective.LOCAL_TILE_SIZE)
-			.collect(Collectors.toList());
-
-		if (nearbyRocks.isEmpty())
+		// Downstairs failsafe: when mining downstairs and inventory full
+		if (inventoryFull && !isUpstairs(localPlayer.getLocalLocation()) && !config.upperFloor() && config.clearRockfalls())
 		{
-			return false;
-		}
-
-		GameObject targetHopper = lowerHopper != null ? lowerHopper : upperHopper;
-		LocalPoint hopperLoc = (targetHopper != null) ? targetHopper.getLocalLocation() : playerLoc;
-
-		GameObject targetRock;
-		if (inventoryFull)
-		{
-			// Stuck with full inventory: mine rockfall closest to hopper / central hub
-			targetRock = nearbyRocks.stream()
-				.min(Comparator.comparingInt(r -> r.getLocalLocation().distanceTo(hopperLoc)))
-				.orElse(null);
-		}
-		else
-		{
-			// Stuck with empty/space: mine rockfall heading towards preferred veins
-			targetRock = nearbyRocks.stream()
-				.min(Comparator.comparingInt(r -> r.getWorldLocation().distanceTo(PREFERRED_MINING_AREA)))
-				.orElse(null);
-		}
-
-		if (targetRock != null)
-		{
-			log.info("Failsafe triggered: stuck between rockfalls! Mining rockfall towards {}", inventoryFull ? "hopper" : "veins");
-			currentState = ScriptState.CLEARING_ROCKFALL;
-			currentRockfallTarget = targetRock;
-			currentVeinTarget = null;
-			interactObject(targetRock, "Mine", "Rockfall");
-			cooldownTicks = 3;
-			stuckTicks = 0;
-			return true;
+			if (stuckTicks >= 2 && !rockfalls.isEmpty())
+			{
+				GameObject tunnelRock = findBlockingTunnelRockfall(localPlayer, true);
+				if (tunnelRock != null)
+				{
+					log.info("Failsafe triggered: clearing closest blocking tunnel rockfall at {}", tunnelRock.getWorldLocation());
+					currentState = ScriptState.CLEARING_ROCKFALL;
+					currentRockfallTarget = tunnelRock;
+					currentVeinTarget = null;
+					interactObject(tunnelRock, "Mine", "Rockfall");
+					cooldownTicks = 3;
+					stuckTicks = 0;
+					return true;
+				}
+			}
 		}
 		return false;
 	}
@@ -1226,25 +1455,6 @@ public class MotherlodeScriptPlugin extends Plugin
 	 */
 	private boolean isBlacklistedRockfall(GameObject rockfall)
 	{
-		if (rockfall == null)
-		{
-			return true;
-		}
-		WorldPoint wp = rockfall.getWorldLocation();
-		if (wp == null)
-		{
-			return false;
-		}
-		if (Math.abs(wp.getX() - BLACKLISTED_ROCKFALL_X) <= 1 && Math.abs(wp.getY() - BLACKLISTED_ROCKFALL_Y) <= 1)
-		{
-			return true;
-		}
-		if (wp.getRegionID() == BLACKLISTED_REGION_ID
-			&& Math.abs(wp.getRegionX() - BLACKLISTED_REGION_X) <= 1
-			&& Math.abs(wp.getRegionY() - BLACKLISTED_REGION_Y) <= 1)
-		{
-			return true;
-		}
 		return false;
 	}
 
@@ -1287,6 +1497,8 @@ public class MotherlodeScriptPlugin extends Plugin
 
 	private void handleBanking(Player localPlayer)
 	{
+		currentRockfallTarget = null;
+		currentVeinTarget = null;
 		if (isUpstairs(localPlayer.getLocalLocation()))
 		{
 			currentState = ScriptState.CLIMBING_LADDER_DOWN;
@@ -1365,6 +1577,8 @@ public class MotherlodeScriptPlugin extends Plugin
 
 	private void handleEmptyingSack(Player localPlayer)
 	{
+		currentRockfallTarget = null;
+		currentVeinTarget = null;
 		if (isUpstairs(localPlayer.getLocalLocation()))
 		{
 			currentState = ScriptState.CLIMBING_LADDER_DOWN;
@@ -1373,19 +1587,6 @@ public class MotherlodeScriptPlugin extends Plugin
 		}
 
 		WorldPoint playerWorld = localPlayer.getWorldLocation();
-		// Only check tunnel rockfalls if player is far away in the western mining room (X < 3733)
-		if (playerWorld != null && playerWorld.getX() < 3733 && config.clearRockfalls())
-		{
-			GameObject tunnelRock = findBlockingTunnelRockfall(localPlayer, true);
-			if (tunnelRock != null)
-			{
-				currentState = ScriptState.CLEARING_ROCKFALL;
-				currentRockfallTarget = tunnelRock;
-				interactObject(tunnelRock, "Mine", "Rockfall");
-				cooldownTicks = 3;
-				return;
-			}
-		}
 
 		// If player is moving or animating (e.g. searching sack), wait
 		if (localPlayer.getAnimation() != -1)
@@ -1421,22 +1622,229 @@ public class MotherlodeScriptPlugin extends Plugin
 
 	private void climbLadderUp(Player localPlayer)
 	{
-		GameObject ladder = findClosestObject(laddersBottom, localPlayer.getLocalLocation());
+		currentRockfallTarget = null;
+		currentVeinTarget = null;
+		idleMiningTicks = 0;
+
+		if (localPlayer.getAnimation() != -1)
+		{
+			return;
+		}
+
+		GameObject ladder = laddersBottom.stream()
+			.filter(l -> l != null && LADDERS_BOTTOM.contains(l.getId()))
+			.min(Comparator.comparingInt(l -> localPlayer.getLocalLocation().distanceTo(l.getLocalLocation())))
+			.orElse(null);
+
+		if (ladder == null)
+		{
+			ladder = findLadder(false, localPlayer.getLocalLocation());
+		}
+		if (ladder == null)
+		{
+			LocalPoint lp = LocalPoint.fromWorld(client, LADDER_BOTTOM_LOCATION);
+			if (lp != null)
+			{
+				ladder = findObjectOnTile(lp);
+				if (ladder != null && !LADDERS_BOTTOM.contains(ladder.getId()))
+				{
+					ladder = null;
+				}
+			}
+		}
+
 		if (ladder != null)
 		{
+			log.info("Climbing ladder up at ({}, {}) id {}",
+				ladder.getLocalLocation().getSceneX(), ladder.getLocalLocation().getSceneY(), ladder.getId());
 			interactObject(ladder, "Climb", "Ladder");
 			cooldownTicks = 3;
+		}
+		else
+		{
+			log.warn("Cannot find ladder bottom to climb up!");
 		}
 	}
 
 	private void climbLadderDown(Player localPlayer)
 	{
-		GameObject ladder = findClosestObject(laddersTop, localPlayer.getLocalLocation());
+		currentRockfallTarget = null;
+		currentVeinTarget = null;
+		idleMiningTicks = 0;
+
+		if (localPlayer.getAnimation() != -1)
+		{
+			return;
+		}
+
+		GameObject ladder = laddersTop.stream()
+			.filter(l -> l != null && LADDERS_TOP.contains(l.getId()))
+			.min(Comparator.comparingInt(l -> localPlayer.getLocalLocation().distanceTo(l.getLocalLocation())))
+			.orElse(null);
+		if (ladder == null)
+		{
+			ladder = findLadder(true, localPlayer.getLocalLocation());
+		}
+
 		if (ladder != null)
 		{
+			log.info("Climbing ladder down at ({}, {}) id {}",
+				ladder.getLocalLocation().getSceneX(), ladder.getLocalLocation().getSceneY(), ladder.getId());
 			interactObject(ladder, "Climb", "Ladder");
 			cooldownTicks = 3;
 		}
+		else
+		{
+			log.warn("Cannot find ladder top to climb down!");
+		}
+	}
+
+	private GameObject findObjectOnTile(LocalPoint lp)
+	{
+		if (lp == null)
+		{
+			return null;
+		}
+		int sceneX = lp.getSceneX();
+		int sceneY = lp.getSceneY();
+		int plane = client.getPlane();
+		Tile[][][] tiles = client.getScene().getTiles();
+		if (tiles == null || plane < 0 || plane >= tiles.length)
+		{
+			return null;
+		}
+		if (sceneX < 0 || sceneX >= Constants.SCENE_SIZE || sceneY < 0 || sceneY >= Constants.SCENE_SIZE)
+		{
+			return null;
+		}
+		Tile tile = tiles[plane][sceneX][sceneY];
+		if (tile != null && tile.getGameObjects() != null)
+		{
+			for (GameObject go : tile.getGameObjects())
+			{
+				if (go != null)
+				{
+					return go;
+				}
+			}
+		}
+		return null;
+	}
+
+	private GameObject findLadder(boolean upstairs, LocalPoint playerLoc)
+	{
+		Tile[][][] tiles = client.getScene().getTiles();
+		if (tiles == null)
+		{
+			return null;
+		}
+
+		Set<Integer> targetIds = upstairs ? LADDERS_TOP : LADDERS_BOTTOM;
+		int z = client.getPlane();
+		GameObject bestLadder = null;
+		int bestDist = Integer.MAX_VALUE;
+
+		for (int x = 0; x < Constants.SCENE_SIZE; ++x)
+		{
+			for (int y = 0; y < Constants.SCENE_SIZE; ++y)
+			{
+				Tile tile = tiles[z][x][y];
+				if (tile == null)
+				{
+					continue;
+				}
+
+				GameObject[] gameObjects = tile.getGameObjects();
+				if (gameObjects == null)
+				{
+					continue;
+				}
+
+				for (GameObject go : gameObjects)
+				{
+					if (go != null && targetIds.contains(go.getId()) && (isUpstairs(go) == upstairs))
+					{
+						int dist = playerLoc != null ? playerLoc.distanceTo(go.getLocalLocation()) : 0;
+						if (dist < bestDist)
+						{
+							bestDist = dist;
+							bestLadder = go;
+						}
+					}
+				}
+			}
+		}
+
+		return bestLadder;
+	}
+
+	private GameObject findHopper(boolean upstairs)
+	{
+		if (upstairs && upperHopper != null)
+		{
+			return upperHopper;
+		}
+		if (!upstairs && lowerHopper != null)
+		{
+			return lowerHopper;
+		}
+
+		if (!upstairs)
+		{
+			LocalPoint lp = LocalPoint.fromWorld(client, LOWER_HOPPER_LOCATION);
+			if (lp != null)
+			{
+				GameObject go = findObjectOnTile(lp);
+				if (go != null && (go.getId() == ObjectID.MOTHERLODE_HOPPER || isHopper(go)))
+				{
+					lowerHopper = go;
+					return go;
+				}
+			}
+		}
+
+		Tile[][][] tiles = client.getScene().getTiles();
+		if (tiles == null)
+		{
+			return null;
+		}
+
+		int z = client.getPlane();
+		for (int x = 0; x < Constants.SCENE_SIZE; ++x)
+		{
+			for (int y = 0; y < Constants.SCENE_SIZE; ++y)
+			{
+				Tile tile = tiles[z][x][y];
+				if (tile == null)
+				{
+					continue;
+				}
+
+				GameObject[] gameObjects = tile.getGameObjects();
+				if (gameObjects == null)
+				{
+					continue;
+				}
+
+				for (GameObject go : gameObjects)
+				{
+					if (go != null && isHopper(go) && (isUpstairs(go) == upstairs))
+					{
+						if (upstairs)
+						{
+							upperHopper = go;
+						}
+						else
+						{
+							lowerHopper = go;
+						}
+						return go;
+					}
+				}
+			}
+		}
+
+		return upstairs ? upperHopper : lowerHopper;
 	}
 
 	private void interactObject(TileObject object, String option, String target)
@@ -1450,14 +1858,64 @@ public class MotherlodeScriptPlugin extends Plugin
 		{
 			return;
 		}
+
+		MenuAction menuAction = MenuAction.GAME_OBJECT_FIRST_OPTION;
+		int param0 = loc.getSceneX();
+		int param1 = loc.getSceneY();
+		int identifier = object.getId();
+		String actualOption = option;
+		String actualTarget = target;
+
+		try
+		{
+			ObjectComposition def = client.getObjectDefinition(object.getId());
+			if (def != null)
+			{
+				if (def.getImpostorIds() != null)
+				{
+					def = def.getImpostor();
+				}
+				if (def != null)
+				{
+					if (def.getName() != null && !def.getName().isEmpty())
+					{
+						actualTarget = def.getName();
+					}
+					String[] actions = def.getActions();
+					if (actions != null)
+					{
+						for (int i = 0; i < actions.length; i++)
+						{
+							if (actions[i] != null && actions[i].toLowerCase().contains(option.toLowerCase()))
+							{
+								switch (i)
+								{
+									case 0: menuAction = MenuAction.GAME_OBJECT_FIRST_OPTION; break;
+									case 1: menuAction = MenuAction.GAME_OBJECT_SECOND_OPTION; break;
+									case 2: menuAction = MenuAction.GAME_OBJECT_THIRD_OPTION; break;
+									case 3: menuAction = MenuAction.GAME_OBJECT_FOURTH_OPTION; break;
+									case 4: menuAction = MenuAction.GAME_OBJECT_FIFTH_OPTION; break;
+								}
+								actualOption = actions[i];
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
+		catch (Exception ignored)
+		{
+		}
+
 		client.menuAction(
-			loc.getSceneX(),
-			loc.getSceneY(),
-			MenuAction.GAME_OBJECT_FIRST_OPTION,
-			object.getId(),
+			param0,
+			param1,
+			menuAction,
+			identifier,
 			0,
-			option,
-			target
+			actualOption,
+			actualTarget
 		);
 	}
 
@@ -1576,15 +2034,37 @@ public class MotherlodeScriptPlugin extends Plugin
 		try
 		{
 			ObjectComposition def = client.getObjectDefinition(gameObject.getId());
-			if (def != null && def.getName() != null && "Hopper".equalsIgnoreCase(def.getName()))
+			if (def != null)
 			{
-				return true;
+				if (def.getImpostorIds() != null)
+				{
+					def = def.getImpostor();
+				}
+				if (def != null && def.getName() != null && "Hopper".equalsIgnoreCase(def.getName()))
+				{
+					return true;
+				}
 			}
 		}
 		catch (Exception ignored)
 		{
 		}
 		return false;
+	}
+
+	private boolean isLadder(GameObject gameObject)
+	{
+		if (gameObject == null)
+		{
+			return false;
+		}
+		int id = gameObject.getId();
+		if (id == ObjectID.MOTHERLODE_LADDER_JOIN || id == 19046
+			|| id == ObjectID.MOTHERLODE_LADDER_STEPS || id == 53243)
+		{
+			return false;
+		}
+		return LADDERS_BOTTOM.contains(id) || LADDERS_TOP.contains(id);
 	}
 
 	private boolean checkInMlm()
@@ -1613,7 +2093,6 @@ public class MotherlodeScriptPlugin extends Plugin
 
 	private void scanScene()
 	{
-		clearObjects();
 		Tile[][][] tiles = client.getScene().getTiles();
 		if (tiles == null)
 		{
@@ -1657,16 +2136,8 @@ public class MotherlodeScriptPlugin extends Plugin
 		int id = gameObject.getId();
 		if (ROCK_OBSTACLES.contains(id))
 		{
-			// Strictly track ONLY the 3 user-specified tunnel rockfalls!
-			// All other rockfalls in the mine are completely ignored so the bot never wanders off to other rockfalls!
-			if (isAnyTunnelRock(gameObject))
-			{
-				rockfalls.add(gameObject);
-			}
-			else
-			{
-				log.debug("Non-tunnel rockfall at {} ignored.", gameObject.getWorldLocation());
-			}
+			rockfalls.add(gameObject);
+			log.debug("Rockfall added at {} (upstairs: {})", gameObject.getWorldLocation(), isUpstairs(gameObject));
 		}
 		else if (id == ObjectID.MOTHERLODE_WHEEL_STRUT_BROKEN)
 		{
@@ -1674,7 +2145,11 @@ public class MotherlodeScriptPlugin extends Plugin
 		}
 		else if (id == ObjectID.MOTHERLODE_HOPPER || isHopper(gameObject))
 		{
-			if (isUpstairs(gameObject))
+			if (gameObject.getWorldLocation() != null && gameObject.getWorldLocation().equals(LOWER_HOPPER_LOCATION))
+			{
+				lowerHopper = gameObject;
+			}
+			else if (isUpstairs(gameObject))
 			{
 				upperHopper = gameObject;
 			}
@@ -1695,13 +2170,16 @@ public class MotherlodeScriptPlugin extends Plugin
 		{
 			bankChest = gameObject;
 		}
-		else if (LADDERS_BOTTOM.contains(id))
+		else if (isLadder(gameObject))
 		{
-			laddersBottom.add(gameObject);
-		}
-		else if (LADDERS_TOP.contains(id))
-		{
-			laddersTop.add(gameObject);
+			if (isUpstairs(gameObject))
+			{
+				laddersTop.add(gameObject);
+			}
+			else
+			{
+				laddersBottom.add(gameObject);
+			}
 		}
 	}
 
@@ -1736,12 +2214,9 @@ public class MotherlodeScriptPlugin extends Plugin
 		{
 			bankChest = null;
 		}
-		else if (LADDERS_BOTTOM.contains(id))
+		else if (isLadder(gameObject))
 		{
 			laddersBottom.remove(gameObject);
-		}
-		else if (LADDERS_TOP.contains(id))
-		{
 			laddersTop.remove(gameObject);
 		}
 	}

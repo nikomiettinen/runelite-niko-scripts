@@ -81,6 +81,15 @@ public class MotherlodeScriptOverlay extends OverlayPanel
 			.rightColor(Color.WHITE)
 			.build());
 
+		if (config.upperFloor())
+		{
+			panelComponent.getChildren().add(LineComponent.builder()
+				.left("Upper Hopper:")
+				.right(config.upperHopperUnlocked() ? "Unlocked" : "Locked (use lower)")
+				.rightColor(config.upperHopperUnlocked() ? Color.GREEN : Color.ORANGE)
+				.build());
+		}
+
 		return super.render(graphics);
 	}
 }

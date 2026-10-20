@@ -34,7 +34,7 @@ public interface MotherlodeScriptConfig extends Config
 
 	@ConfigItem(
 		keyName = "upperFloor",
-		name = "Mine Upstairs (72+ Mining)",
+		name = "Mine Upstairs (Upper Level)",
 		description = "Climb the ladder and mine veins on the upper floor",
 		position = 2,
 		section = generalSection
@@ -45,10 +45,22 @@ public interface MotherlodeScriptConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "upperHopperUnlocked",
+		name = "Upstairs Hopper (50 Nuggets)",
+		description = "Use the hopper on the upper floor (requires 50 golden nuggets). If disabled, climbs down to deposit in lower hopper.",
+		position = 3,
+		section = generalSection
+	)
+	default boolean upperHopperUnlocked()
+	{
+		return false;
+	}
+
+	@ConfigItem(
 		keyName = "biggerSack",
 		name = "Bigger Sack Unlocked",
 		description = "Deposit up to 7 inventories before emptying the sack (instead of 4)",
-		position = 3,
+		position = 4,
 		section = generalSection
 	)
 	default boolean biggerSack()
@@ -59,9 +71,9 @@ public interface MotherlodeScriptConfig extends Config
 	@Range(min = 20, max = 28)
 	@ConfigItem(
 		keyName = "minPayDirt",
-		name = "Pay-dirt Target",
-		description = "Amount of pay-dirt to collect before depositing into hopper",
-		position = 4,
+		name = "Deposit At Pay-dirt Count",
+		description = "Deposit to hopper when inventory has at least this much pay-dirt (or when full)",
+		position = 5,
 		section = generalSection
 	)
 	default int minPayDirt()
@@ -69,31 +81,24 @@ public interface MotherlodeScriptConfig extends Config
 		return 26;
 	}
 
-	@ConfigSection(
-		name = "Behavior",
-		description = "Automation actions",
-		position = 10
-	)
-	String behaviorSection = "behavior";
-
 	@ConfigItem(
-		keyName = "dropGems",
-		name = "Drop Uncut Gems",
-		description = "Automatically drop uncut sapphires, emeralds, rubies, and diamonds",
-		position = 11,
-		section = behaviorSection
+		keyName = "repairStruts",
+		name = "Repair Water Wheels",
+		description = "Repair broken water wheel struts when near the hopper (requires hammer)",
+		position = 6,
+		section = generalSection
 	)
-	default boolean dropGems()
+	default boolean repairStruts()
 	{
 		return true;
 	}
 
 	@ConfigItem(
 		keyName = "clearRockfalls",
-		name = "Clear Rockfalls",
-		description = "Automatically mine rockfalls blocking tunnels (IDs 26679, 26680)",
-		position = 12,
-		section = behaviorSection
+		name = "Clear Blocking Rockfalls",
+		description = "Mine rockfalls blocking the tunnel between the hopper/sack and the mining area",
+		position = 7,
+		section = generalSection
 	)
 	default boolean clearRockfalls()
 	{
@@ -101,14 +106,14 @@ public interface MotherlodeScriptConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "repairStruts",
-		name = "Repair Water Wheels",
-		description = "Fetch hammer from crate (ID 357) if needed and repair broken struts (ID 26670)",
-		position = 13,
-		section = behaviorSection
+		keyName = "dropGems",
+		name = "Drop Uncut Gems",
+		description = "Automatically drop uncut gems found while mining pay-dirt to save inventory space",
+		position = 8,
+		section = generalSection
 	)
-	default boolean repairStruts()
+	default boolean dropGems()
 	{
-		return true;
+		return false;
 	}
 }
