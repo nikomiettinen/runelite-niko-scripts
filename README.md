@@ -1,3 +1,18 @@
+SKRIPTIT SAATTAA FREEZATA EMT MIKSI
+
+MLM ÄLÄ KÄYTÄ UPSTAIR HOPPERIA, LOCKAA HAMMER INVENTORYYN PANKKI ASETUKSISTA
+WOODCUTTER NORMAL LOGS VAIN POWER WCING
+OAKIT VARROCK WESTISSÄ BANK MAHDOLLISUUS
+YEW/MAGIC WC GUILDISSA BANK MAHDOLLISUUS
+
+
+
+
+
+
+
+
+
 # RuneLite - Asennusohje (Komentokehote / CMD)
 
 Tämä opas neuvoo alusta loppuun, miten asennat ja käynnistät asiakasohjelman suoraan Windowsin **Komentokehotteesta (cmd)** ilman että sinun tarvitsee etsiä asennustiedostoja netistä.
