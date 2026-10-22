@@ -5,6 +5,8 @@ mlm skripti
 lockaa hammer inventoryyn bankin asetuksista
 
 wc plugin toimii normal,oak,yew,magic puilla
+
+
 normal logs only power chop
 oak varrock westissä, bank option
 yew/magic wc guildissa, bank option
