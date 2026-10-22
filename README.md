@@ -1,20 +1,15 @@
 SKRIPTIT SAATTAA FREEZATA (voi johtua gpu pluginista)
 
-MLM ÄLÄ KÄYTÄ UPSTAIR HOPPERIA, LOCKAA HAMMER INVENTORYYN PANKKI ASETUKSISTA
+mlm skripti
+älä käytä yläkerran deposit hopperia
+lockaa hammer inventoryyn bankin asetuksista
 
+wc plugin toimii normal,oak,yew,magic puilla
+normal logs only power chop
+oak varrock westissä, bank option
+yew/magic wc guildissa, bank option
 
-
-WOODCUTTER NORMAL LOGS VAIN POWER WCING
-
-OAKIT VARROCK WESTISSÄ BANK MAHDOLLISUUS
-
-YEW/MAGIC WC GUILDISSA BANK MAHDOLLISUUS
-
-
-
-
-
-
+agility skripti toimii draynor,varrock,canifis,falador,camelot
 
 
 
