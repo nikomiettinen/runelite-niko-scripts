@@ -19,9 +19,9 @@ agility skripti toimii draynor,varrock,canifis,falador,camelot
 
 
 
-**ASENNUSOHJE
+**ASENNUSOHJE**
 
-AVAA KOMENTOKEHOTE (CMD)**
+**AVAA KOMENTOKEHOTE (CMD)**
 
 ## Vaihe 1: Asenna Java ja Git suoraan Komentokehotteesta
 
@@ -36,21 +36,19 @@ winget install --id Git.Git -e --accept-package-agreements --accept-source-agree
 
 **TÄRKEÄ VÄLIVAIHE**
 
-Käynnistä kone uudelleen
+**Käynnistä kone uudelleen**
 
-Voit varmistaa asennuksen ajamalla:
+**Voit varmistaa asennuksen ajamalla:**
 
 java -version
 git --version
 
-*(Jos molemmat tulostavat versionumerot, kaikki on valmista seuraavaan vaiheeseen!)*
+***(Jos molemmat tulostavat versionumerot, kaikki on valmista seuraavaan vaiheeseen!)***
 
 
 
 ## Vaihe 2: Lataa projekti githubista
 
-
-### 2.1 Siirry Työpöydälle ja lataa projekti GitHubista
 
 cd %USERPROFILE%\Desktop 
 
@@ -61,7 +59,7 @@ cd runelite-niko-scripts
 gradlew.bat client:compileJava
 
 
-(Ensimmäisellä kerralla tässä voi mennä 1–2 minuuttia kun tarvittavat tiedostot ladataan. Lopuksi lukee `BUILD SUCCESSFUL`.)
+**(Ensimmäisellä kerralla tässä voi mennä 1–2 minuuttia kun tarvittavat tiedostot ladataan. Lopuksi lukee `BUILD SUCCESSFUL`.)**
 
 gradlew.bat client:shadowJar
 
