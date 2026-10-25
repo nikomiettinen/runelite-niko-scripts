@@ -90,6 +90,15 @@ public class MotherlodeScriptOverlay extends OverlayPanel
 				.build());
 		}
 
+		if (config.antiLogout())
+		{
+			panelComponent.getChildren().add(LineComponent.builder()
+				.left("Anti-Logout:")
+				.right("Active")
+				.rightColor(Color.GREEN)
+				.build());
+		}
+
 		return super.render(graphics);
 	}
 }

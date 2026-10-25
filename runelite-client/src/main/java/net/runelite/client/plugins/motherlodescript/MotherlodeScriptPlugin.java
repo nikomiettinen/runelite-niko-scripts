@@ -4,6 +4,12 @@
  */
 package net.runelite.client.plugins.motherlodescript;
 
+import java.awt.Canvas;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseEvent;
+import java.time.Duration;
+import javax.swing.SwingUtilities;
+import net.runelite.client.events.ConfigChanged;
 import com.google.common.collect.ImmutableSet;
 import com.google.inject.Provides;
 import java.util.Arrays;
@@ -215,6 +221,11 @@ public class MotherlodeScriptPlugin extends Plugin
 	private int cooldownTicks = 0;
 	private int idleMiningTicks = 0;
 	private int idleStrutTicks = 0;
+	private static final int EXTENDED_LOGOUT_TIMEOUT = (int) Duration.ofMinutes(25).toMillis() / Constants.CLIENT_TICK_LENGTH;
+	private static final int DEFAULT_LOGOUT_TIMEOUT = (int) Duration.ofMinutes(5).toMillis() / Constants.CLIENT_TICK_LENGTH;
+
+	private int nextAntiLogoutThreshold = 6_000 + (int) (Math.random() * 4_000);
+	private long lastAntiLogoutTimeMs = 0;
 	private int previousPayDirt = 0;
 
 	private boolean shouldEmptySackOnStart = true;
@@ -255,11 +266,16 @@ public class MotherlodeScriptPlugin extends Plugin
 		{
 			clientThread.invokeLater(this::scanScene);
 		}
+		if (config.antiLogout())
+		{
+			client.setIdleTimeout(EXTENDED_LOGOUT_TIMEOUT);
+		}
 	}
 
 	@Override
 	protected void shutDown()
 	{
+		client.setIdleTimeout(DEFAULT_LOGOUT_TIMEOUT);
 		overlayManager.remove(overlay);
 		clearObjects();
 		currentState = ScriptState.IDLE;
@@ -272,6 +288,28 @@ public class MotherlodeScriptPlugin extends Plugin
 		idleStrutTicks = 0;
 		shouldEmptySackOnStart = true;
 		previousScriptActive = false;
+	}
+
+
+	@Subscribe
+	public void onConfigChanged(ConfigChanged event)
+	{
+		if (!"motherlodescript".equals(event.getGroup()))
+		{
+			return;
+		}
+
+		if ("antiLogout".equals(event.getKey()))
+		{
+			if (config.antiLogout())
+			{
+				client.setIdleTimeout(EXTENDED_LOGOUT_TIMEOUT);
+			}
+			else
+			{
+				client.setIdleTimeout(DEFAULT_LOGOUT_TIMEOUT);
+			}
+		}
 	}
 
 	@Subscribe
@@ -428,6 +466,11 @@ public class MotherlodeScriptPlugin extends Plugin
 	@Subscribe
 	public void onGameTick(GameTick event)
 	{
+		if (config.antiLogout())
+		{
+			handleAntiLogout();
+		}
+
 		if (!inMlm)
 		{
 			inMlm = checkInMlm();
@@ -2219,6 +2262,81 @@ public class MotherlodeScriptPlugin extends Plugin
 			laddersBottom.remove(gameObject);
 			laddersTop.remove(gameObject);
 		}
+	}
+
+
+	private void handleAntiLogout()
+	{
+		if (client.getGameState() != GameState.LOGGED_IN)
+		{
+			return;
+		}
+
+		client.setIdleTimeout(EXTENDED_LOGOUT_TIMEOUT);
+
+		int idleTicks = Math.min(client.getKeyboardIdleTicks(), client.getMouseIdleTicks());
+		long now = System.currentTimeMillis();
+
+		if (idleTicks >= nextAntiLogoutThreshold && (now - lastAntiLogoutTimeMs) > 60_000L)
+		{
+			log.debug("Anti-logout triggered: idleTicks={}, nextThreshold={}", idleTicks, nextAntiLogoutThreshold);
+			triggerAntiLogoutInput();
+			lastAntiLogoutTimeMs = now;
+			nextAntiLogoutThreshold = 5_000 + (int) (Math.random() * 4_500);
+		}
+	}
+
+	private void triggerAntiLogoutInput()
+	{
+		Canvas canvas = client.getCanvas();
+		if (canvas == null || !canvas.isShowing())
+		{
+			return;
+		}
+
+		SwingUtilities.invokeLater(() ->
+		{
+			try
+			{
+				net.runelite.api.Point mousePos = client.getMouseCanvasPosition();
+				int width = canvas.getWidth();
+				int height = canvas.getHeight();
+				if (width <= 0 || height <= 0)
+				{
+					return;
+				}
+
+				int x = (mousePos != null && mousePos.getX() > 0) ? mousePos.getX() : width / 2;
+				int y = (mousePos != null && mousePos.getY() > 0) ? mousePos.getY() : height / 2;
+
+				x = Math.max(2, Math.min(x, width - 2));
+				y = Math.max(2, Math.min(y, height - 2));
+
+				int jitterX = (x > width / 2) ? x - 1 : x + 1;
+
+				long time = System.currentTimeMillis();
+				MouseEvent mouseMoveEvent = new MouseEvent(
+					canvas,
+					MouseEvent.MOUSE_MOVED,
+					time,
+					0,
+					jitterX,
+					y,
+					0,
+					false
+				);
+				canvas.dispatchEvent(mouseMoveEvent);
+
+				KeyEvent press = new KeyEvent(canvas, KeyEvent.KEY_PRESSED, time, 0, KeyEvent.VK_CONTROL, KeyEvent.CHAR_UNDEFINED);
+				KeyEvent release = new KeyEvent(canvas, KeyEvent.KEY_RELEASED, time + 15, 0, KeyEvent.VK_CONTROL, KeyEvent.CHAR_UNDEFINED);
+				canvas.dispatchEvent(press);
+				canvas.dispatchEvent(release);
+			}
+			catch (Exception e)
+			{
+				log.warn("Error triggering anti-logout input", e);
+			}
+		});
 	}
 
 	private void clearObjects()

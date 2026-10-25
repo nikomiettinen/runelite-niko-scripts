@@ -116,4 +116,16 @@ public interface MotherlodeScriptConfig extends Config
 	{
 		return false;
 	}
+
+	@ConfigItem(
+		keyName = "antiLogout",
+		name = "Anti-Logout (Anti-AFK)",
+		description = "Estää automaattisen uloskirjautumisen (5-25 min) kun hiiri ei liiku ruudulla",
+		position = 9,
+		section = generalSection
+	)
+	default boolean antiLogout()
+	{
+		return true;
+	}
 }
