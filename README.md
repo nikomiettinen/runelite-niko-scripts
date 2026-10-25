@@ -41,6 +41,7 @@ winget install --id Git.Git -e --accept-package-agreements --accept-source-agree
 **Voit varmistaa asennuksen ajamalla:**
 
 java -version
+
 git --version
 
 ***(Jos molemmat tulostavat versionumerot, kaikki on valmista seuraavaan vaiheeseen!)***
