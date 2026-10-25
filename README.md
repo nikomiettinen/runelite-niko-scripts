@@ -18,21 +18,19 @@ agility skripti toimii draynor,varrock,canifis,falador,camelot
 
 
 
+# Vaihe 1: Asenna Java ja Git suoraan Komentokehotteesta
 
-**ASENNUSOHJE**
+## 1.1 Asenna Java (Eclipse Temurin JDK 17)
 
-**AVAA KOMENTOKEHOTE (CMD)**
-
-## Vaihe 1: Asenna Java ja Git suoraan Komentokehotteesta
-
-### 1.1 Asenna Java (Eclipse Temurin JDK 17)
+```cmd
 winget install --id EclipseAdoptium.Temurin.17.JDK -e --accept-package-agreements --accept-source-agreements
+```
 
+## 1.2 Asenna Git
 
-### 1.2 Asenna Git
-
+```cmd
 winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements
-
+```
 
 **TÄRKEÄ VÄLIVAIHE**
 
@@ -40,38 +38,76 @@ winget install --id Git.Git -e --accept-package-agreements --accept-source-agree
 
 **Voit varmistaa asennuksen ajamalla:**
 
+```cmd
 java -version
-
 git --version
+```
 
-***(Jos molemmat tulostavat versionumerot, kaikki on valmista seuraavaan vaiheeseen!)***
+**(Jos molemmat tulostavat versionumerot, kaikki on valmista seuraavaan vaiheeseen!)**
 
+---
 
+# Vaihe 2: Lataa projekti githubista
 
-## Vaihe 2: Lataa projekti githubista
+```cmd
+cd %USERPROFILE%\Desktop
+```
 
-
-cd %USERPROFILE%\Desktop 
-
+```cmd
 git clone https://github.com/nikomiettinen/runelite-niko-scripts.git
+```
 
+```cmd
 cd runelite-niko-scripts
+```
 
+```cmd
 gradlew.bat client:compileJava
-
+```
 
 **(Ensimmäisellä kerralla tässä voi mennä 1–2 minuuttia kun tarvittavat tiedostot ladataan. Lopuksi lukee `BUILD SUCCESSFUL`.)**
 
+```cmd
 gradlew.bat client:shadowJar
+```
 
+---
 
+# Vaihe 3: Käynnistä RuneLite
 
-## Vaihe 3: Käynnistä RuneLite
-cd %USERPROFILE%\Desktop\runelite-niko-scripts   **(riippuen siitä mihin asensit)**
+```cmd
+cd %USERPROFILE%\Desktop\runelite-niko-scripts
+```
 
+**(riippuen siitä mihin asensit)**
 
-**Käynnistä runelite cmd kautta **
+**Käynnistä runelite cmd kautta**
 
+```cmd
+gradlew.bat :client:shadowJar && java -ea -jar runelite-client\build\libs\client-1.13.3-SNAPSHOT-shaded.jar --developer-mode --noupdate
+```
+
+---
+
+# Vaihe 4: Miten päivität koodin myöhemmin?
+
+Jos projektiin tulee päivityksiä GitHubissa, avaa Komentokehote, siirry kansioon ja aja:
+
+```cmd
+cd %USERPROFILE%\Desktop\runelite-niko-scripts
+```
+
+```cmd
+git pull origin master
+```
+
+```cmd
+gradlew.bat client:compileJava
+```
+
+```cmd
+gradlew.bat client:shadowJar
+```
 
 gradlew.bat :client:shadowJar && java -ea -jar runelite-client\build\libs\client-1.13.3-SNAPSHOT-shaded.jar --developer-mode --noupdate
 
