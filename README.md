@@ -35,6 +35,7 @@ winget install --id Git.Git -e --accept-package-agreements --accept-source-agree
 
 
 **TÄRKEÄ VÄLIVAIHE**
+
 Käynnistä kone uudelleen
 
 Voit varmistaa asennuksen ajamalla:
@@ -52,14 +53,18 @@ git --version
 ### 2.1 Siirry Työpöydälle ja lataa projekti GitHubista
 
 cd %USERPROFILE%\Desktop 
+
 git clone https://github.com/nikomiettinen/runelite-niko-scripts.git
+
 cd runelite-niko-scripts
 
 gradlew.bat client:compileJava
 
+
 (Ensimmäisellä kerralla tässä voi mennä 1–2 minuuttia kun tarvittavat tiedostot ladataan. Lopuksi lukee `BUILD SUCCESSFUL`.)
 
 gradlew.bat client:shadowJar
+
 
 
 ## Vaihe 3: Käynnistä RuneLite
