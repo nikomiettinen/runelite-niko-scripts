@@ -19,9 +19,9 @@ agility skripti toimii draynor,varrock,canifis,falador,camelot
 
 
 
-ASENNUSOHJE
+**ASENNUSOHJE
 
-AVAA KOMENTOKEHOTE (CMD)
+AVAA KOMENTOKEHOTE (CMD)**
 
 ## Vaihe 1: Asenna Java ja Git suoraan Komentokehotteesta
 
