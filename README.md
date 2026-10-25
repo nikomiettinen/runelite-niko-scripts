@@ -113,12 +113,14 @@ gradlew.bat :client:shadowJar && java -ea -jar runelite-client\build\libs\client
 
 
 
-## Vaihe 4: Miten päivität koodin myöhemmin?
+Vaihe 4: Miten päivität koodin myöhemmin?
 
 Jos projektiin tulee päivityksiä GitHubissa, avaa Komentokehote, siirry kansioon ja aja:
 
 cd %USERPROFILE%\Desktop\runelite-niko-scripts
-git pull origin master
-gradlew.bat client:compileJava
-gradlew.bat client:shadowJar
 
+git pull origin master
+
+gradlew.bat client:compileJava
+
+gradlew.bat client:shadowJar
