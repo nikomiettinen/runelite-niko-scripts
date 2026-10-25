@@ -54,6 +54,15 @@ public class WoodcutterScriptOverlay extends OverlayPanel
 			.rightColor(Color.YELLOW)
 			.build());
 
+		if (config.treeType().isPowerchopOnly())
+		{
+			panelComponent.getChildren().add(LineComponent.builder()
+				.left("Drop Mode:")
+				.right(config.dropMode().getLabel())
+				.rightColor(Color.LIGHT_GRAY)
+				.build());
+		}
+
 		panelComponent.getChildren().add(LineComponent.builder()
 			.left("Inventory:")
 			.right(plugin.getCurrentInventoryLogs() + " / 28")
@@ -66,11 +75,29 @@ public class WoodcutterScriptOverlay extends OverlayPanel
 			.rightColor(Color.LIGHT_GRAY)
 			.build());
 
+		if (config.pickupBirdNests())
+		{
+			panelComponent.getChildren().add(LineComponent.builder()
+				.left("Nests Picked:")
+				.right(String.valueOf(plugin.getNestsCollected()))
+				.rightColor(Color.ORANGE)
+				.build());
+		}
+
 		panelComponent.getChildren().add(LineComponent.builder()
 			.left("XP Gained:")
 			.right(String.format("%,d", plugin.getWoodcuttingXpGained()))
 			.rightColor(Color.CYAN)
 			.build());
+
+		if (config.antiAfk())
+		{
+			panelComponent.getChildren().add(LineComponent.builder()
+				.left("Anti-AFK:")
+				.right("Active")
+				.rightColor(Color.GREEN)
+				.build());
+		}
 
 		if (running)
 		{
