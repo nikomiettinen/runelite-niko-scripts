@@ -23,19 +23,19 @@ import net.runelite.api.GameState;
 import net.runelite.api.InventoryID;
 import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
+import net.runelite.api.ItemContainer;
 import net.runelite.api.ItemID;
 import net.runelite.api.MenuAction;
+import net.runelite.api.NPC;
 import net.runelite.api.Perspective;
 import net.runelite.api.Point;
-import net.runelite.api.ItemContainer;
 import net.runelite.api.Player;
-import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.Varbits;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
-import net.runelite.client.events.ConfigChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.gameval.InterfaceID;
+import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.chat.ChatColorType;
 import net.runelite.client.chat.ChatMessageBuilder;
@@ -43,6 +43,7 @@ import net.runelite.client.chat.ChatMessageManager;
 import net.runelite.client.chat.QueuedMessage;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.overlay.OverlayManager;
@@ -50,8 +51,8 @@ import net.runelite.client.ui.overlay.OverlayManager;
 @Slf4j
 @PluginDescriptor(
 	name = "Nature Altar Script",
-	description = "Runs back and forth between Karamja General Store and Nature Altar without minimap clicks",
-	tags = {"nature", "altar", "karamja", "runecraft", "runner", "store"}
+	description = "Runs back and forth between Karamja General Store and Nature Altar, un-noting pure essence with Aisles",
+	tags = {"nature", "altar", "karamja", "runecraft", "runner", "store", "aisles", "essence"}
 )
 public class NatureAltarScriptPlugin extends Plugin
 {
@@ -59,7 +60,10 @@ public class NatureAltarScriptPlugin extends Plugin
 	public static final WorldPoint STORE_LOCATION = new WorldPoint(2767, 3121, 0);
 	public static final WorldPoint NATURE_ALTAR = new WorldPoint(2869, 3012, 0);
 
-	// Exact route specified by user
+	// NPC Aisles at Karamja General store
+	public static final int AISLES_NPC_ID = 2134;
+
+	// Exact route specified by user (27 waypoints)
 	private static final WorldPoint[] POSITIONS = {
 		new WorldPoint(2767, 3121, 0),
 		new WorldPoint(2767, 3112, 0),
@@ -104,6 +108,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		IDLE,
 		RUNNING_TO_ALTAR,
 		RUNNING_TO_STORE,
+		UNNOTING_AT_STORE,
 		PAUSED_AT_ENDPOINT
 	}
 
@@ -146,9 +151,13 @@ public class NatureAltarScriptPlugin extends Plugin
 	@Getter
 	private int energyPercent = 100;
 
+	@Getter
+	private int unnotedEssenceCount = 0;
+
 	private int pauseTicks = 0;
 	private int stuckTicks = 0;
 	private int actionCooldownTicks = 0;
+	private int unnoteAttempts = 0;
 	private WorldPoint previousWorldLoc = null;
 
 	@Provides
@@ -165,6 +174,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		statusColor = Color.GREEN;
 		stuckTicks = 0;
 		actionCooldownTicks = 0;
+		unnoteAttempts = 0;
 		previousWorldLoc = null;
 		log.info("Nature Altar Script started!");
 		sendGameMessage("Plugin started. Toggle 'Start Running Script' to begin.");
@@ -215,6 +225,20 @@ public class NatureAltarScriptPlugin extends Plugin
 		int distToStore = playerLoc.distanceTo(STORE_LOCATION);
 		int distToAltar = playerLoc.distanceTo(NATURE_ALTAR);
 
+		unnotedEssenceCount = countUnnotedEssence();
+
+		// If closer to store and we have noted essence but no unnoted essence, un-note first
+		if (distToStore <= distToAltar && config.unnoteEssence() && hasNotedEssence() && unnotedEssenceCount == 0)
+		{
+			state = State.UNNOTING_AT_STORE;
+			status = "UN-NOTING ESSENCE WITH AISLES";
+			statusColor = Color.YELLOW;
+			unnoteAttempts = 0;
+			actionCooldownTicks = 1;
+			sendGameMessage("At General Store: un-noting Pure Essence with Aisles first...");
+			return;
+		}
+
 		// Find closest waypoint along the predefined route
 		int closestIdx = 0;
 		int bestDist = Integer.MAX_VALUE;
@@ -260,6 +284,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		}
 
 		energyPercent = client.getEnergy() / 100;
+		unnotedEssenceCount = countUnnotedEssence();
 		handleRunEnergy();
 
 		if (!config.startScript())
@@ -324,8 +349,11 @@ public class NatureAltarScriptPlugin extends Plugin
 				handleRunningToStore(playerLoc);
 				break;
 
+			case UNNOTING_AT_STORE:
+				handleUnnotingAtStore(playerLoc);
+				break;
+
 			case PAUSED_AT_ENDPOINT:
-				// End pause, continue in opposite direction
 				break;
 		}
 	}
@@ -336,7 +364,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		distanceToCurrentWaypoint = playerLoc.distanceTo(targetWp);
 
 		// Check if arrived at overall destination (Nature Altar)
-		if (playerLoc.distanceTo(NATURE_ALTAR) <= 4 || (currentWaypointIndex == POSITIONS.length - 1 && distanceToCurrentWaypoint <= 3))
+		if (playerLoc.distanceTo(NATURE_ALTAR) <= 3 || (currentWaypointIndex == POSITIONS.length - 1 && distanceToCurrentWaypoint <= 3))
 		{
 			lapsCompleted++;
 			log.info("Arrived at Nature Altar (2869, 3012)! Trips completed: {}", lapsCompleted);
@@ -386,11 +414,24 @@ public class NatureAltarScriptPlugin extends Plugin
 		distanceToCurrentWaypoint = playerLoc.distanceTo(targetWp);
 
 		// Check if arrived at overall destination (General Store)
-		if (playerLoc.distanceTo(STORE_LOCATION) <= 4 || (currentWaypointIndex == 0 && distanceToCurrentWaypoint <= 3))
+		if (playerLoc.distanceTo(STORE_LOCATION) <= 3 || (currentWaypointIndex == 0 && distanceToCurrentWaypoint <= 3))
 		{
 			lapsCompleted++;
 			log.info("Arrived at Karamja General Store (2767, 3121)! Trips completed: {}", lapsCompleted);
-			sendGameMessage(String.format("Arrived at General Store! Turning around to Nature Altar. (Trips: %d)", lapsCompleted));
+			sendGameMessage(String.format("Arrived at General Store! (Trips: %d)", lapsCompleted));
+
+			// If configured to un-note essence, and we have noted essence but no unnoted essence
+			if (config.unnoteEssence() && hasNotedEssence() && unnotedEssenceCount == 0)
+			{
+				state = State.UNNOTING_AT_STORE;
+				status = "UN-NOTING ESSENCE WITH AISLES";
+				statusColor = Color.YELLOW;
+				unnoteAttempts = 0;
+				actionCooldownTicks = 1;
+				return;
+			}
+
+			// Otherwise turn around directly to altar
 			state = State.RUNNING_TO_ALTAR;
 			currentWaypointIndex = 1;
 			status = "RUNNING TO NATURE ALTAR";
@@ -428,6 +469,345 @@ public class NatureAltarScriptPlugin extends Plugin
 				stuckTicks = 0;
 			}
 		}
+	}
+
+	private void handleUnnotingAtStore(WorldPoint playerLoc)
+	{
+		// 1. If we already have unnoted essence in inventory, un-noting is complete!
+		if (unnotedEssenceCount > 0)
+		{
+			log.info("Essence un-noted successfully! ({} unnoted in inventory). Resuming route to Nature Altar...", unnotedEssenceCount);
+			sendGameMessage(String.format("Un-noted %d Pure Essence! Running to Nature Altar...", unnotedEssenceCount));
+			state = State.RUNNING_TO_ALTAR;
+			currentWaypointIndex = 1;
+			status = "RUNNING TO NATURE ALTAR";
+			statusColor = Color.CYAN;
+			pauseTicks = Math.max(0, config.delayAtDestination());
+			walkToWorldPoint(POSITIONS[currentWaypointIndex]);
+			return;
+		}
+
+		if (actionCooldownTicks > 0)
+		{
+			return;
+		}
+
+		// 2. If dialogue options (Chatmenu 219) are open, select Option 3 ("Exchange all 100 coins.")
+		if (isDialogueOptionsOpen())
+		{
+			handleAislesDialogue();
+			actionCooldownTicks = 2;
+			return;
+		}
+
+		// 3. Find NPC Aisles (ID 2134)
+		NPC aisles = findAisles();
+		if (aisles == null)
+		{
+			log.info("NPC Aisles not found yet, walking to store location {}", STORE_LOCATION);
+			walkToWorldPoint(STORE_LOCATION);
+			actionCooldownTicks = 2;
+			return;
+		}
+
+		// If player is far from Aisles (> 4 tiles), walk closer
+		if (playerLoc.distanceTo(aisles.getWorldLocation()) > 4)
+		{
+			log.info("Walking closer to Aisles at {}", aisles.getWorldLocation());
+			walkToWorldPoint(aisles.getWorldLocation());
+			actionCooldownTicks = 2;
+			return;
+		}
+
+		// 4. Use noted Pure Essence on Aisles
+		useEssenceOnAisles(aisles);
+		actionCooldownTicks = 2;
+	}
+
+	private NPC findAisles()
+	{
+		for (NPC npc : client.getNpcs())
+		{
+			if (npc != null)
+			{
+				if (npc.getId() == AISLES_NPC_ID)
+				{
+					return npc;
+				}
+				String name = npc.getName();
+				if (name != null && name.equalsIgnoreCase("Aisles"))
+				{
+					return npc;
+				}
+			}
+		}
+		return null;
+	}
+
+	private boolean isDialogueOptionsOpen()
+	{
+		Widget chatMenu = client.getWidget(InterfaceID.Chatmenu.OPTIONS);
+		if (chatMenu != null && !chatMenu.isHidden())
+		{
+			return true;
+		}
+		Widget chatMenuFallback = client.getWidget(219, 1);
+		return chatMenuFallback != null && !chatMenuFallback.isHidden();
+	}
+
+	private boolean handleAislesDialogue()
+	{
+		Widget chatMenu = client.getWidget(InterfaceID.Chatmenu.OPTIONS);
+		if (chatMenu == null || chatMenu.isHidden())
+		{
+			chatMenu = client.getWidget(219, 1);
+		}
+
+		if (chatMenu == null || chatMenu.isHidden())
+		{
+			return false;
+		}
+
+		Widget[] children = chatMenu.getChildren();
+		if (children == null || children.length == 0)
+		{
+			children = chatMenu.getDynamicChildren();
+		}
+
+		int targetOptionIndex = 3; // Default option 3
+		Widget targetWidget = null;
+
+		if (children != null)
+		{
+			for (Widget child : children)
+			{
+				if (child != null && child.getText() != null)
+				{
+					String text = child.getText().toLowerCase();
+					if (text.contains("exchange all") || (text.contains("exchange") && text.contains("100")))
+					{
+						targetWidget = child;
+						targetOptionIndex = child.getIndex();
+						log.info("Found exchange option text '{}' at index {}", child.getText(), targetOptionIndex);
+						break;
+					}
+				}
+			}
+
+			if (targetWidget == null && children.length > 3 && children[3] != null)
+			{
+				targetWidget = children[3];
+			}
+		}
+
+		log.info("Selecting dialogue Option 3 (Exchange all 100 coins.) via widget click & key press 3");
+		status = "SELECTING OPTION 3 (EXCHANGE ALL)";
+		statusColor = Color.YELLOW;
+		sendGameMessage("Exchanging noted Pure Essence with Aisles (Option 3)...");
+
+		// 1. Direct menuAction: WIDGET_CONTINUE on Chatmenu.OPTIONS
+		client.menuAction(
+			targetOptionIndex,
+			InterfaceID.Chatmenu.OPTIONS,
+			MenuAction.WIDGET_CONTINUE,
+			targetOptionIndex,
+			-1,
+			"Continue",
+			""
+		);
+
+		// 2. Dispatch canvas click on option if bounds available
+		if (targetWidget != null)
+		{
+			Rectangle bounds = targetWidget.getBounds();
+			if (bounds != null && bounds.width > 0 && bounds.height > 0)
+			{
+				dispatchCanvasClick(new Point((int) bounds.getCenterX(), (int) bounds.getCenterY()));
+			}
+		}
+
+		// 3. Hotkey 3 (official OSRS dialogue hotkey)
+		pressKey(KeyEvent.VK_3);
+		pressKey(KeyEvent.VK_NUMPAD3);
+
+		return true;
+	}
+
+	private void useEssenceOnAisles(NPC aisles)
+	{
+		int slot = findNotedEssenceSlot();
+		if (slot == -1)
+		{
+			log.warn("No noted pure essence found in inventory to un-note!");
+			return;
+		}
+
+		ItemContainer inv = client.getItemContainer(InventoryID.INVENTORY);
+		Item item = inv != null ? inv.getItem(slot) : null;
+		int itemId = item != null ? item.getId() : 7937;
+		String itemName = "Pure essence";
+		try
+		{
+			ItemComposition comp = client.getItemDefinition(itemId);
+			if (comp != null && comp.getName() != null)
+			{
+				itemName = comp.getName();
+			}
+		}
+		catch (Exception ignored)
+		{
+		}
+
+		unnoteAttempts++;
+		log.info("Using noted essence {} (ID: {}) in slot {} on Aisles (attempt {})", itemName, itemId, slot, unnoteAttempts);
+		status = "USING ESSENCE ON AISLES";
+		statusColor = Color.YELLOW;
+
+		// 1. Select "Use" on noted essence in inventory
+		client.menuAction(
+			slot,
+			InterfaceID.Inventory.ITEMS,
+			MenuAction.WIDGET_TARGET,
+			0,
+			itemId,
+			"Use",
+			itemName
+		);
+
+		// 2. Target NPC Aisles
+		client.menuAction(
+			0,
+			0,
+			MenuAction.WIDGET_TARGET_ON_NPC,
+			aisles.getIndex(),
+			0,
+			"Use",
+			"Use " + itemName + " -> " + aisles.getName()
+		);
+
+		// Fallback: If several attempts made, also try Talk-to
+		if (unnoteAttempts % 3 == 0)
+		{
+			client.menuAction(
+				0,
+				0,
+				MenuAction.NPC_FIRST_OPTION,
+				aisles.getIndex(),
+				0,
+				"Talk-to",
+				aisles.getName()
+			);
+		}
+	}
+
+	private int findNotedEssenceSlot()
+	{
+		ItemContainer inv = client.getItemContainer(InventoryID.INVENTORY);
+		if (inv == null)
+		{
+			return -1;
+		}
+		Item[] items = inv.getItems();
+		for (int i = 0; i < items.length; i++)
+		{
+			if (items[i] != null && items[i].getId() > 0)
+			{
+				if (isNotedEssence(items[i].getId()))
+				{
+					return i;
+				}
+			}
+		}
+		return -1;
+	}
+
+	private int findUnnotedEssenceSlot()
+	{
+		ItemContainer inv = client.getItemContainer(InventoryID.INVENTORY);
+		if (inv == null)
+		{
+			return -1;
+		}
+		Item[] items = inv.getItems();
+		for (int i = 0; i < items.length; i++)
+		{
+			if (items[i] != null && items[i].getId() > 0)
+			{
+				if (isUnnotedEssence(items[i].getId()))
+				{
+					return i;
+				}
+			}
+		}
+		return -1;
+	}
+
+	private boolean hasNotedEssence()
+	{
+		return findNotedEssenceSlot() != -1;
+	}
+
+	private boolean hasUnnotedEssence()
+	{
+		return findUnnotedEssenceSlot() != -1;
+	}
+
+	private int countUnnotedEssence()
+	{
+		ItemContainer inv = client.getItemContainer(InventoryID.INVENTORY);
+		if (inv == null)
+		{
+			return 0;
+		}
+		int count = 0;
+		for (Item item : inv.getItems())
+		{
+			if (item != null && item.getId() > 0 && isUnnotedEssence(item.getId()))
+			{
+				count += item.getQuantity();
+			}
+		}
+		return count;
+	}
+
+	private boolean isUnnotedEssence(int itemId)
+	{
+		if (itemId == ItemID.PURE_ESSENCE || itemId == 1436)
+		{
+			return true;
+		}
+		try
+		{
+			ItemComposition comp = client.getItemDefinition(itemId);
+			if (comp != null && comp.getNote() == -1 && comp.getName() != null && comp.getName().toLowerCase().contains("essence"))
+			{
+				return true;
+			}
+		}
+		catch (Exception ignored)
+		{
+		}
+		return false;
+	}
+
+	private boolean isNotedEssence(int itemId)
+	{
+		if (itemId == 7937 || itemId == 1437)
+		{
+			return true;
+		}
+		try
+		{
+			ItemComposition comp = client.getItemDefinition(itemId);
+			if (comp != null && comp.getNote() != -1 && comp.getName() != null && comp.getName().toLowerCase().contains("essence"))
+			{
+				return true;
+			}
+		}
+		catch (Exception ignored)
+		{
+		}
+		return false;
 	}
 
 	/**
@@ -534,6 +914,39 @@ public class NatureAltarScriptPlugin extends Plugin
 		});
 	}
 
+	private void pressKey(int keyCode)
+	{
+		Canvas canvas = client.getCanvas();
+		if (canvas == null)
+		{
+			return;
+		}
+
+		long now = System.currentTimeMillis();
+		KeyEvent press = new KeyEvent(canvas, KeyEvent.KEY_PRESSED, now, 0, keyCode, KeyEvent.CHAR_UNDEFINED, KeyEvent.KEY_LOCATION_STANDARD);
+		KeyEvent release = new KeyEvent(canvas, KeyEvent.KEY_RELEASED, now + 20, 0, keyCode, KeyEvent.CHAR_UNDEFINED, KeyEvent.KEY_LOCATION_STANDARD);
+
+		try
+		{
+			canvas.dispatchEvent(press);
+			canvas.dispatchEvent(release);
+		}
+		catch (Exception ignored)
+		{
+		}
+
+		SwingUtilities.invokeLater(() -> {
+			try
+			{
+				canvas.dispatchEvent(press);
+				canvas.dispatchEvent(release);
+			}
+			catch (Exception ignored)
+			{
+			}
+		});
+	}
+
 	private void handleRunEnergy()
 	{
 		int minEnergy = config.minRunEnergy() * 100;
@@ -602,7 +1015,7 @@ public class NatureAltarScriptPlugin extends Plugin
 
 	private int findItemSlotInInventory(Set<Integer> validIds)
 	{
-		net.runelite.api.ItemContainer inv = client.getItemContainer(InventoryID.INVENTORY);
+		ItemContainer inv = client.getItemContainer(InventoryID.INVENTORY);
 		if (inv == null)
 		{
 			return -1;

@@ -59,6 +59,12 @@ public class NatureAltarScriptOverlay extends OverlayPanel
 			.build());
 
 		panelComponent.getChildren().add(LineComponent.builder()
+			.left("Essence (Unnoted):")
+			.right(String.valueOf(plugin.getUnnotedEssenceCount()))
+			.rightColor(plugin.getUnnotedEssenceCount() > 0 ? Color.GREEN : Color.ORANGE)
+			.build());
+
+		panelComponent.getChildren().add(LineComponent.builder()
 			.left("Trips Done:")
 			.right(String.valueOf(plugin.getLapsCompleted()))
 			.rightColor(Color.MAGENTA)

@@ -55,6 +55,18 @@ public interface NatureAltarScriptConfig extends Config
 		return 1;
 	}
 
+	@ConfigItem(
+		keyName = "unnoteEssence",
+		name = "Un-note Essence with Aisles",
+		description = "Automatically un-notes Pure Essence with Aisles (NPC ID 2134) at Karamja General Store using Option 3 (Exchange all 100 coins.)",
+		position = 4,
+		section = generalSection
+	)
+	default boolean unnoteEssence()
+	{
+		return true;
+	}
+
 	@ConfigSection(
 		name = "Movement",
 		description = "Run energy and path settings",
