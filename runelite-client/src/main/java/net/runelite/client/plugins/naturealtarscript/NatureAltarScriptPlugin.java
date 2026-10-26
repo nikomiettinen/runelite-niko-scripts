@@ -75,6 +75,12 @@ public class NatureAltarScriptPlugin extends Plugin
 	// Mysterious ruins object ID
 	public static final int MYSTERIOUS_RUINS_ID = 34821;
 
+	// Nature rune crafting altar inside temple
+	public static final int NATURE_ALTAR_OBJECT_ID = 34768;
+
+	// Exit portal inside temple
+	public static final int NATURE_PORTAL_OBJECT_ID = 34756;
+
 	// Exact route specified by user (27 waypoints)
 	private static final WorldPoint[] POSITIONS = {
 		new WorldPoint(2767, 3121, 0),
@@ -568,33 +574,84 @@ public class NatureAltarScriptPlugin extends Plugin
 	{
 		isTalismanActivated = false;
 
-		// If player leaves altar through portal back to surface (Y < 4000):
+		// 1. If player leaves altar through portal back to surface (Y < 4000):
 		if (!isInsideNatureAltar(playerLoc))
 		{
 			log.info("Exited Nature Altar back to surface at {}. Checking state...", playerLoc);
 			if (unnotedEssenceCount > 0)
 			{
 				state = State.ENTERING_RUINS;
+				ruinsStep = RuinsStep.WAIT_ARRIVAL;
+				actionCooldownTicks = 2;
 			}
 			else
 			{
 				state = State.RUNNING_TO_STORE;
-				currentWaypointIndex = POSITIONS.length - 1;
+				int closestIdx = findClosestWaypointIndex(playerLoc);
+				if (closestIdx >= POSITIONS.length - 1 && playerLoc.distanceTo(POSITIONS[closestIdx]) <= 1)
+				{
+					currentWaypointIndex = POSITIONS.length - 2;
+				}
+				else
+				{
+					currentWaypointIndex = Math.min(closestIdx, POSITIONS.length - 1);
+				}
+				status = "RUNNING TO GENERAL STORE";
+				statusColor = Color.CYAN;
+				sendGameMessage(String.format("Poistuttu portaalista. Juostaan takaisin General Storelle (WP %d/%d)...",
+					currentWaypointIndex + 1, POSITIONS.length));
 				walkToWorldPoint(POSITIONS[currentWaypointIndex]);
+				actionCooldownTicks = 1;
 			}
 			return;
 		}
 
-		if (unnotedEssenceCount == 0)
+		if (actionCooldownTicks > 0)
 		{
-			status = "ALTAR DONE (0 ESSENCE)";
-			statusColor = Color.GREEN;
+			return;
 		}
-		else
+
+		// 2. Step 1: Craft nature runes if we have unnoted pure essence
+		if (unnotedEssenceCount > 0 || hasUnnotedEssence())
 		{
-			status = "INSIDE ALTAR (" + unnotedEssenceCount + " ESSENCE)";
+			TileObject altar = findNatureAltar();
+			if (altar == null)
+			{
+				log.warn("Nature altar (ID {}) not found in scene!", NATURE_ALTAR_OBJECT_ID);
+				status = "SEARCHING FOR ALTAR (34768)";
+				statusColor = Color.YELLOW;
+				actionCooldownTicks = 1;
+				return;
+			}
+
+			log.info("Crafting nature runes at Altar (ID {})! Unnoted essence: {}", NATURE_ALTAR_OBJECT_ID, unnotedEssenceCount);
+			status = "CRAFTING NATURE RUNES (ALTAR 34768)";
 			statusColor = Color.GREEN;
+			sendGameMessage(String.format("Klikataan Nature Altaria (ID 34768) ja tehdään %d Pure Essencestä runet...", unnotedEssenceCount));
+
+			interactWithGameObject(altar, NATURE_ALTAR_OBJECT_ID, "Craft-rune", "Altar");
+			actionCooldownTicks = 4;
+			return;
 		}
+
+		// 3. Step 2: Pure essence crafted! Exit through portal (ID 34756)
+		TileObject portal = findPortal();
+		if (portal == null)
+		{
+			log.warn("Exit portal (ID {}) not found in scene!", NATURE_PORTAL_OBJECT_ID);
+			status = "SEARCHING FOR PORTAL (34756)";
+			statusColor = Color.YELLOW;
+			actionCooldownTicks = 1;
+			return;
+		}
+
+		log.info("All essence crafted! Exiting via Portal (ID {})...", NATURE_PORTAL_OBJECT_ID);
+		status = "EXITING VIA PORTAL (34756)";
+		statusColor = Color.GREEN;
+		sendGameMessage("Essencet tehty! Poistutaan portaalista (ID 34756)...");
+
+		interactWithGameObject(portal, NATURE_PORTAL_OBJECT_ID, "Use", "Portal");
+		actionCooldownTicks = 4;
 	}
 
 	private boolean isInsideNatureAltar(WorldPoint loc)
@@ -999,14 +1056,53 @@ public class NatureAltarScriptPlugin extends Plugin
 		return null;
 	}
 
-	private Point getRuinsClickPoint(TileObject ruins)
+	private void interactWithGameObject(TileObject obj, int objectId, String option, String targetName)
 	{
-		if (ruins == null)
+		if (obj == null)
+		{
+			return;
+		}
+
+		LocalPoint lp = obj.getLocalLocation();
+		int param0 = lp != null ? lp.getSceneX() : 0;
+		int param1 = lp != null ? lp.getSceneY() : 0;
+		if (obj instanceof GameObject)
+		{
+			Point sceneMin = ((GameObject) obj).getSceneMinLocation();
+			if (sceneMin != null)
+			{
+				param0 = sceneMin.getX();
+				param1 = sceneMin.getY();
+			}
+		}
+
+		Point clickPoint = getObjectClickPoint(obj);
+		if (clickPoint != null)
+		{
+			dispatchCanvasClick(clickPoint);
+		}
+		else
+		{
+			client.menuAction(
+				param0,
+				param1,
+				MenuAction.GAME_OBJECT_FIRST_OPTION,
+				objectId,
+				0,
+				option,
+				targetName
+			);
+		}
+	}
+
+	private Point getObjectClickPoint(TileObject obj)
+	{
+		if (obj == null)
 		{
 			return null;
 		}
 
-		Shape clickbox = ruins.getClickbox();
+		Shape clickbox = obj.getClickbox();
 		if (clickbox != null && clickbox.getBounds() != null)
 		{
 			Rectangle bounds = clickbox.getBounds();
@@ -1023,7 +1119,7 @@ public class NatureAltarScriptPlugin extends Plugin
 			}
 		}
 
-		LocalPoint lp = ruins.getLocalLocation();
+		LocalPoint lp = obj.getLocalLocation();
 		if (lp != null)
 		{
 			Point p = Perspective.localToCanvas(client, lp, client.getPlane(), 50);
@@ -1039,6 +1135,183 @@ public class NatureAltarScriptPlugin extends Plugin
 		}
 
 		return null;
+	}
+
+	private Point getRuinsClickPoint(TileObject ruins)
+	{
+		return getObjectClickPoint(ruins);
+	}
+
+	private TileObject findNatureAltar()
+	{
+		TileObject obj = findGameObjectById(NATURE_ALTAR_OBJECT_ID);
+		if (obj != null)
+		{
+			return obj;
+		}
+		return findGameObjectByName("Altar");
+	}
+
+	private TileObject findPortal()
+	{
+		TileObject obj = findGameObjectById(NATURE_PORTAL_OBJECT_ID);
+		if (obj != null)
+		{
+			return obj;
+		}
+		return findGameObjectByName("Portal");
+	}
+
+	private TileObject findGameObjectByName(String matchName)
+	{
+		Tile[][][] tiles = client.getScene().getTiles();
+		int plane = client.getPlane();
+		if (tiles == null || plane >= tiles.length)
+		{
+			return null;
+		}
+
+		for (int x = 0; x < Constants.SCENE_SIZE; x++)
+		{
+			for (int y = 0; y < Constants.SCENE_SIZE; y++)
+			{
+				Tile tile = tiles[plane][x][y];
+				if (tile == null)
+				{
+					continue;
+				}
+
+				GameObject[] gameObjects = tile.getGameObjects();
+				if (gameObjects != null)
+				{
+					for (GameObject go : gameObjects)
+					{
+						if (go != null)
+						{
+							try
+							{
+								ObjectComposition def = client.getObjectDefinition(go.getId());
+								if (def != null && def.getName() != null && def.getName().equalsIgnoreCase(matchName))
+								{
+									return go;
+								}
+							}
+							catch (Exception ignored)
+							{
+							}
+						}
+					}
+				}
+			}
+		}
+
+		return null;
+	}
+
+	private TileObject findGameObjectById(int targetId)
+	{
+		Tile[][][] tiles = client.getScene().getTiles();
+		int plane = client.getPlane();
+		if (tiles == null || plane >= tiles.length)
+		{
+			return null;
+		}
+
+		Player localPlayer = client.getLocalPlayer();
+		WorldPoint playerLoc = localPlayer != null ? localPlayer.getWorldLocation() : null;
+
+		TileObject bestObj = null;
+		int closestDist = Integer.MAX_VALUE;
+
+		for (int x = 0; x < Constants.SCENE_SIZE; x++)
+		{
+			for (int y = 0; y < Constants.SCENE_SIZE; y++)
+			{
+				Tile tile = tiles[plane][x][y];
+				if (tile == null)
+				{
+					continue;
+				}
+
+				GameObject[] gameObjects = tile.getGameObjects();
+				if (gameObjects != null)
+				{
+					for (GameObject go : gameObjects)
+					{
+						if (go != null && matchesTargetId(go.getId(), targetId))
+						{
+							if (playerLoc == null)
+							{
+								return go;
+							}
+							int d = playerLoc.distanceTo(go.getWorldLocation());
+							if (d < closestDist)
+							{
+								closestDist = d;
+								bestObj = go;
+							}
+						}
+					}
+				}
+
+				WallObject wo = tile.getWallObject();
+				if (wo != null && matchesTargetId(wo.getId(), targetId))
+				{
+					return wo;
+				}
+
+				DecorativeObject deco = tile.getDecorativeObject();
+				if (deco != null && matchesTargetId(deco.getId(), targetId))
+				{
+					return deco;
+				}
+
+				GroundObject gro = tile.getGroundObject();
+				if (gro != null && matchesTargetId(gro.getId(), targetId))
+				{
+					return gro;
+				}
+			}
+		}
+
+		return bestObj;
+	}
+
+	private boolean matchesTargetId(int objId, int targetId)
+	{
+		if (objId == targetId)
+		{
+			return true;
+		}
+		try
+		{
+			ObjectComposition def = client.getObjectDefinition(objId);
+			if (def != null)
+			{
+				if (def.getId() == targetId)
+				{
+					return true;
+				}
+				if (def.getImpostor() != null && def.getImpostor().getId() == targetId)
+				{
+					return true;
+				}
+				if (def.getImpostorIds() != null)
+				{
+					for (int impId : def.getImpostorIds())
+					{
+						if (impId == targetId)
+						{
+							return true;
+						}
+					}
+				}
+			}
+		}
+		catch (Exception ignored)
+		{
+		}
+		return false;
 	}
 
 	private TileObject findMysteriousRuins()
