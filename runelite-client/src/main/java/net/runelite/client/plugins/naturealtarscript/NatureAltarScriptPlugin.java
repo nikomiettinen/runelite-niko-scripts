@@ -840,18 +840,28 @@ public class NatureAltarScriptPlugin extends Plugin
 
 		// B. Canvas click on ruins clickbox: because talisman is active, clicking ruins triggers "Use Nature talisman -> Mysterious ruins"
 		Shape clickbox = ruins.getClickbox();
+		Point clickPoint = null;
 		if (clickbox != null && clickbox.getBounds() != null)
 		{
 			Rectangle bounds = clickbox.getBounds();
 			if (bounds.width > 0 && bounds.height > 0)
 			{
-				Point p = new Point((int) bounds.getCenterX(), (int) bounds.getCenterY());
-				int cw = client.getCanvasWidth();
-				int ch = client.getCanvasHeight();
-				if (p.getX() >= 20 && p.getX() < (cw - 220) && p.getY() >= 20 && p.getY() < (ch - 160))
-				{
-					dispatchCanvasClick(p);
-				}
+				clickPoint = new Point((int) bounds.getCenterX(), (int) bounds.getCenterY());
+			}
+		}
+
+		if (clickPoint == null && lp != null)
+		{
+			clickPoint = Perspective.localToCanvas(client, lp, client.getPlane(), 50);
+		}
+
+		if (clickPoint != null)
+		{
+			int cw = client.getCanvasWidth();
+			int ch = client.getCanvasHeight();
+			if (clickPoint.getX() >= 20 && clickPoint.getX() < (cw - 220) && clickPoint.getY() >= 20 && clickPoint.getY() < (ch - 160))
+			{
+				dispatchCanvasClick(clickPoint);
 			}
 		}
 
@@ -868,10 +878,37 @@ public class NatureAltarScriptPlugin extends Plugin
 			return null;
 		}
 
-		TileObject closestRuins = null;
-		int closestDist = Integer.MAX_VALUE;
 		Player localPlayer = client.getLocalPlayer();
 		WorldPoint playerLoc = localPlayer != null ? localPlayer.getWorldLocation() : null;
+
+		// 1. First pass: Check for GameObject with exact ID 34821
+		for (int x = 0; x < Constants.SCENE_SIZE; x++)
+		{
+			for (int y = 0; y < Constants.SCENE_SIZE; y++)
+			{
+				Tile tile = tiles[plane][x][y];
+				if (tile == null)
+				{
+					continue;
+				}
+
+				GameObject[] gameObjects = tile.getGameObjects();
+				if (gameObjects != null)
+				{
+					for (GameObject go : gameObjects)
+					{
+						if (go != null && (go.getId() == MYSTERIOUS_RUINS_ID || go.getId() == 34821))
+						{
+							return go;
+						}
+					}
+				}
+			}
+		}
+
+		// 2. Second pass: Check GameObjects strictly matching isMysteriousRuins (rejecting Rubble)
+		GameObject bestRuins = null;
+		int closestDist = Integer.MAX_VALUE;
 
 		for (int x = 0; x < Constants.SCENE_SIZE; x++)
 		{
@@ -898,32 +935,15 @@ public class NatureAltarScriptPlugin extends Plugin
 							if (d < closestDist)
 							{
 								closestDist = d;
-								closestRuins = go;
+								bestRuins = go;
 							}
 						}
 					}
 				}
-
-				WallObject wall = tile.getWallObject();
-				if (wall != null && isMysteriousRuins(wall))
-				{
-					return wall;
-				}
-
-				GroundObject ground = tile.getGroundObject();
-				if (ground != null && isMysteriousRuins(ground))
-				{
-					return ground;
-				}
-
-				DecorativeObject deco = tile.getDecorativeObject();
-				if (deco != null && isMysteriousRuins(deco))
-				{
-					return deco;
-				}
 			}
 		}
-		return closestRuins;
+
+		return bestRuins;
 	}
 
 	private boolean isMysteriousRuins(TileObject obj)
@@ -932,21 +952,43 @@ public class NatureAltarScriptPlugin extends Plugin
 		{
 			return false;
 		}
-		if (obj.getId() == MYSTERIOUS_RUINS_ID || obj.getId() == 34821)
-		{
-			return true;
-		}
+
+		int objId = obj.getId();
+
+		// Check object definition first to strictly reject rubble
 		try
 		{
-			ObjectComposition def = client.getObjectDefinition(obj.getId());
+			ObjectComposition def = client.getObjectDefinition(objId);
 			if (def != null)
 			{
-				if (def.getId() == MYSTERIOUS_RUINS_ID || def.getId() == 34821)
+				String name = def.getName();
+				if (name != null && name.toLowerCase().contains("rubble"))
+				{
+					return false;
+				}
+
+				if (def.getImpostor() != null)
+				{
+					String impName = def.getImpostor().getName();
+					if (impName != null && impName.toLowerCase().contains("rubble"))
+					{
+						return false;
+					}
+					if (impName != null && impName.equalsIgnoreCase("Mysterious ruins"))
+					{
+						return true;
+					}
+					if (def.getImpostor().getId() == MYSTERIOUS_RUINS_ID || def.getImpostor().getId() == 34821)
+					{
+						return true;
+					}
+				}
+
+				if (name != null && name.equalsIgnoreCase("Mysterious ruins"))
 				{
 					return true;
 				}
-				String name = def.getName();
-				if (name != null && (name.equalsIgnoreCase("Mysterious ruins") || name.toLowerCase().contains("ruins")))
+				if (def.getId() == MYSTERIOUS_RUINS_ID || def.getId() == 34821)
 				{
 					return true;
 				}
@@ -959,19 +1001,6 @@ public class NatureAltarScriptPlugin extends Plugin
 							return true;
 						}
 					}
-					ObjectComposition imp = def.getImpostor();
-					if (imp != null)
-					{
-						if (imp.getId() == MYSTERIOUS_RUINS_ID || imp.getId() == 34821)
-						{
-							return true;
-						}
-						String impName = imp.getName();
-						if (impName != null && (impName.equalsIgnoreCase("Mysterious ruins") || impName.toLowerCase().contains("ruins")))
-						{
-							return true;
-						}
-					}
 				}
 			}
 		}
@@ -979,9 +1008,8 @@ public class NatureAltarScriptPlugin extends Plugin
 		{
 		}
 
-		// Also match by world location around Nature Altar ruins (x: 2865..2873, y: 3014..3025)
-		WorldPoint wp = obj.getWorldLocation();
-		if (wp != null && wp.getX() >= 2865 && wp.getX() <= 2873 && wp.getY() >= 3014 && wp.getY() <= 3025)
+		// Exact ID match check
+		if (objId == MYSTERIOUS_RUINS_ID || objId == 34821)
 		{
 			return true;
 		}
