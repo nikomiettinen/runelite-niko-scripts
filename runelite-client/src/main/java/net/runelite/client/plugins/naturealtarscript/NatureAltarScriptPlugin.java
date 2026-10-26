@@ -7,6 +7,8 @@ package net.runelite.client.plugins.naturealtarscript;
 import com.google.inject.Provides;
 import java.awt.Canvas;
 import java.awt.Color;
+import java.awt.Rectangle;
+import java.awt.Shape;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.util.Arrays;
@@ -170,6 +172,7 @@ public class NatureAltarScriptPlugin extends Plugin
 	private int stuckTicks = 0;
 	private int actionCooldownTicks = 0;
 	private int unnoteAttempts = 0;
+	private boolean isTalismanActivated = false;
 	private WorldPoint previousWorldLoc = null;
 
 	@Provides
@@ -187,6 +190,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		stuckTicks = 0;
 		actionCooldownTicks = 0;
 		unnoteAttempts = 0;
+		isTalismanActivated = false;
 		previousWorldLoc = null;
 		log.info("Nature Altar Script started!");
 		sendGameMessage("Plugin started. Toggle 'Start Running Script' to begin.");
@@ -199,6 +203,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		state = State.IDLE;
 		status = "STOPPED";
 		statusColor = Color.RED;
+		isTalismanActivated = false;
 		log.info("Nature Altar Script stopped.");
 	}
 
@@ -239,6 +244,7 @@ public class NatureAltarScriptPlugin extends Plugin
 
 		WorldPoint playerLoc = localPlayer.getWorldLocation();
 		unnotedEssenceCount = countUnnotedEssence();
+		isTalismanActivated = false;
 
 		// 1. If already inside Nature Altar temple
 		if (isInsideNatureAltar(playerLoc))
@@ -431,7 +437,7 @@ public class NatureAltarScriptPlugin extends Plugin
 
 	/**
 	 * Strictly waits until the player arrives at the currently clicked waypoint tile before clicking the next!
-	 * Once arrived at the last waypoint tile (2869, 3012, 0), uses Nature talisman on Mysterious ruins (ID 34821).
+	 * Once arrived at the last waypoint tile (2869, 3012, 0), proceeds to enter ruins with Nature talisman.
 	 */
 	private void handleRunningToAltar(WorldPoint playerLoc)
 	{
@@ -478,7 +484,6 @@ public class NatureAltarScriptPlugin extends Plugin
 		}
 
 		// Player has not yet reached the targeted tile: WAIT!
-		// Only re-click if character has completely stopped moving
 		if (stuckTicks >= 4)
 		{
 			log.info("Player stopped moving before reaching WP {}/{} (dist: {}), re-clicking...",
@@ -489,13 +494,16 @@ public class NatureAltarScriptPlugin extends Plugin
 	}
 
 	/**
-	 * Entering Mysterious ruins (ID 34821) with Nature talisman.
+	 * Entering Mysterious ruins (ID 34821) in two discrete user-requested steps:
+	 * Step 1: Click Nature talisman (ID 1462) active
+	 * Step 2: Click Mysterious ruins (ID 34821)
 	 */
 	private void handleEnteringRuins(WorldPoint playerLoc)
 	{
 		// 1. Check if already inside Nature Altar temple (Y > 4000)
 		if (isInsideNatureAltar(playerLoc))
 		{
+			isTalismanActivated = false;
 			lapsCompleted++;
 			log.info("Successfully entered Nature Altar interior at {}! Trips completed: {}", playerLoc, lapsCompleted);
 			sendGameMessage(String.format("Päästiin sisälle Nature Altarille! (Kierrokset: %d)", lapsCompleted));
@@ -509,6 +517,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		// 2. If no unnoted essence is left, return to store
 		if (unnotedEssenceCount == 0 && !hasUnnotedEssence())
 		{
+			isTalismanActivated = false;
 			log.info("No unnoted essence in inventory. Heading back to General Store...");
 			state = State.RUNNING_TO_STORE;
 			currentWaypointIndex = POSITIONS.length - 1;
@@ -521,13 +530,14 @@ public class NatureAltarScriptPlugin extends Plugin
 			return;
 		}
 
-		// 3. Use Nature talisman on Mysterious ruins (ID 34821)
+		// 3. Perform two-step entrance
 		enterMysteriousRuins();
-		actionCooldownTicks = 3;
 	}
 
 	private void handleInsideAltar(WorldPoint playerLoc)
 	{
+		isTalismanActivated = false;
+
 		// If player leaves altar through portal back to surface (Y < 4000):
 		if (!isInsideNatureAltar(playerLoc))
 		{
@@ -572,6 +582,8 @@ public class NatureAltarScriptPlugin extends Plugin
 	 */
 	private void handleRunningToStore(WorldPoint playerLoc)
 	{
+		isTalismanActivated = false;
+
 		// If player already has unnoted Pure Essence, turn around to Altar immediately!
 		if (unnotedEssenceCount > 0)
 		{
@@ -656,6 +668,8 @@ public class NatureAltarScriptPlugin extends Plugin
 
 	private void handleUnnotingAtStore(WorldPoint playerLoc)
 	{
+		isTalismanActivated = false;
+
 		// 1. If we already have unnoted essence in inventory, un-noting is complete!
 		if (unnotedEssenceCount > 0)
 		{
@@ -708,14 +722,16 @@ public class NatureAltarScriptPlugin extends Plugin
 	}
 
 	/**
-	 * Uses Nature talisman in inventory on Mysterious ruins (ID 34821).
-	 * Strictly uses menuAction without raw canvas mouse clicks, preventing yellow-click ground walk overrides!
+	 * Two-step Nature Talisman on Mysterious Ruins entrance:
+	 * Step 1: Click Nature talisman (ID 1462) in inventory active.
+	 * Step 2: Next tick when active, click Mysterious ruins (ID 34821).
 	 */
 	private void enterMysteriousRuins()
 	{
 		int talismanSlot = findNatureTalismanSlot();
 		if (talismanSlot == -1)
 		{
+			isTalismanActivated = false;
 			log.warn("Nature talisman not found in inventory!");
 			status = "NO NATURE TALISMAN";
 			statusColor = Color.RED;
@@ -723,10 +739,47 @@ public class NatureAltarScriptPlugin extends Plugin
 			return;
 		}
 
-		ItemContainer inv = client.getItemContainer(InventoryID.INVENTORY);
-		Item talismanItem = inv != null ? inv.getItem(talismanSlot) : null;
-		int talismanId = talismanItem != null ? talismanItem.getId() : ItemID.NATURE_TALISMAN;
+		// STEP 1: If talisman is not yet active, click it to activate it!
+		boolean widgetSelected = client.isWidgetSelected();
+		if (!isTalismanActivated && !widgetSelected)
+		{
+			log.info("Step 1: Clicking Nature talisman (ID 1462, slot {}) active in inventory...", talismanSlot);
+			status = "ACTIVATING NATURE TALISMAN";
+			statusColor = Color.YELLOW;
+			sendGameMessage("Klikataan Nature talisman (ID 1462) aktiiviseksi...");
 
+			// A. MenuAction to select Nature talisman for targeting
+			client.menuAction(
+				talismanSlot,
+				InterfaceID.Inventory.ITEMS,
+				MenuAction.WIDGET_TARGET,
+				0,
+				ItemID.NATURE_TALISMAN,
+				"Use",
+				"Nature talisman"
+			);
+
+			// B. Dispatch canvas click on the inventory slot to guarantee selection
+			Widget invWidget = client.getWidget(InterfaceID.Inventory.ITEMS);
+			if (invWidget != null)
+			{
+				Widget child = invWidget.getChild(talismanSlot);
+				if (child != null)
+				{
+					Rectangle bounds = child.getBounds();
+					if (bounds != null && bounds.width > 0 && bounds.height > 0)
+					{
+						dispatchCanvasClick(new Point((int) bounds.getCenterX(), (int) bounds.getCenterY()));
+					}
+				}
+			}
+
+			isTalismanActivated = true;
+			actionCooldownTicks = 1; // Wait 1 game tick for item activation
+			return;
+		}
+
+		// STEP 2: Nature talisman is active! Now click Mysterious ruins (ID 34821)
 		TileObject ruins = findMysteriousRuins();
 		if (ruins == null)
 		{
@@ -768,23 +821,13 @@ public class NatureAltarScriptPlugin extends Plugin
 		{
 		}
 
-		log.info("Using Nature talisman (slot {}, ID {}) on {} (ID {}) at scene ({}, {})",
-			talismanSlot, talismanId, ruinsName, ruinsId, param0, param1);
-		status = "USE TALISMAN -> " + ruinsName.toUpperCase();
-		statusColor = Color.YELLOW;
+		log.info("Step 2: Talisman is active! Clicking Mysterious ruins (ID {}) at scene ({}, {})...",
+			ruinsId, param0, param1);
+		status = "CLICKING MYSTERIOUS RUINS (34821)";
+		statusColor = Color.GREEN;
+		sendGameMessage("Talisman aktiivinen! Klikataan Mysterious ruins (ID 34821)...");
 
-		// 1. Select "Use" on Nature talisman in inventory
-		client.menuAction(
-			talismanSlot,
-			InterfaceID.Inventory.ITEMS,
-			MenuAction.WIDGET_TARGET,
-			0,
-			talismanId,
-			"Use",
-			"Nature talisman"
-		);
-
-		// 2. Click Mysterious ruins with talisman (WIDGET_TARGET_ON_GAME_OBJECT)
+		// A. Direct menuAction: WIDGET_TARGET_ON_GAME_OBJECT
 		client.menuAction(
 			param0,
 			param1,
@@ -795,8 +838,25 @@ public class NatureAltarScriptPlugin extends Plugin
 			"Use Nature talisman -> " + ruinsName
 		);
 
-		// Fallback: If ruins also has a direct "Enter" option (e.g. if wearing tiara)
-		// We do not dispatch raw canvas clicks because raw mouse events trigger a "Walk here" yellow click!
+		// B. Canvas click on ruins clickbox: because talisman is active, clicking ruins triggers "Use Nature talisman -> Mysterious ruins"
+		Shape clickbox = ruins.getClickbox();
+		if (clickbox != null && clickbox.getBounds() != null)
+		{
+			Rectangle bounds = clickbox.getBounds();
+			if (bounds.width > 0 && bounds.height > 0)
+			{
+				Point p = new Point((int) bounds.getCenterX(), (int) bounds.getCenterY());
+				int cw = client.getCanvasWidth();
+				int ch = client.getCanvasHeight();
+				if (p.getX() >= 20 && p.getX() < (cw - 220) && p.getY() >= 20 && p.getY() < (ch - 160))
+				{
+					dispatchCanvasClick(p);
+				}
+			}
+		}
+
+		isTalismanActivated = false;
+		actionCooldownTicks = 3;
 	}
 
 	private TileObject findMysteriousRuins()
@@ -1057,7 +1117,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		// 2. Dispatch canvas click on option if bounds available
 		if (targetWidget != null)
 		{
-			java.awt.Rectangle bounds = targetWidget.getBounds();
+			Rectangle bounds = targetWidget.getBounds();
 			if (bounds != null && bounds.width > 0 && bounds.height > 0)
 			{
 				dispatchCanvasClick(new Point((int) bounds.getCenterX(), (int) bounds.getCenterY()));
