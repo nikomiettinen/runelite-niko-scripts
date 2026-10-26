@@ -614,6 +614,12 @@ public class NatureAltarScriptPlugin extends Plugin
 		// 2. Step 1: Craft nature runes if we have unnoted pure essence
 		if (unnotedEssenceCount > 0 || hasUnnotedEssence())
 		{
+			Player localPlayer = client.getLocalPlayer();
+			if (localPlayer != null && localPlayer.getPoseAnimation() != localPlayer.getIdlePoseAnimation())
+			{
+				return;
+			}
+
 			TileObject altar = findNatureAltar();
 			if (altar == null)
 			{
@@ -630,11 +636,17 @@ public class NatureAltarScriptPlugin extends Plugin
 			sendGameMessage(String.format("Klikataan Nature Altaria (ID 34768) ja tehdään %d Pure Essencestä runet...", unnotedEssenceCount));
 
 			interactWithGameObject(altar, NATURE_ALTAR_OBJECT_ID, "Craft-rune", "Altar");
-			actionCooldownTicks = 4;
+			actionCooldownTicks = 3;
 			return;
 		}
 
 		// 3. Step 2: Pure essence crafted! Exit through portal (ID 34756)
+		Player localPlayer = client.getLocalPlayer();
+		if (localPlayer != null && localPlayer.getPoseAnimation() != localPlayer.getIdlePoseAnimation())
+		{
+			return;
+		}
+
 		TileObject portal = findPortal();
 		if (portal == null)
 		{
@@ -651,7 +663,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		sendGameMessage("Essencet tehty! Poistutaan portaalista (ID 34756)...");
 
 		interactWithGameObject(portal, NATURE_PORTAL_OBJECT_ID, "Use", "Portal");
-		actionCooldownTicks = 4;
+		actionCooldownTicks = 3;
 	}
 
 	private boolean isInsideNatureAltar(WorldPoint loc)
@@ -1056,7 +1068,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		return null;
 	}
 
-	private void interactWithGameObject(TileObject obj, int objectId, String option, String targetName)
+	private void interactWithGameObject(TileObject obj, int defaultId, String defaultOption, String defaultTarget)
 	{
 		if (obj == null)
 		{
@@ -1064,8 +1076,13 @@ public class NatureAltarScriptPlugin extends Plugin
 		}
 
 		LocalPoint lp = obj.getLocalLocation();
-		int param0 = lp != null ? lp.getSceneX() : 0;
-		int param1 = lp != null ? lp.getSceneY() : 0;
+		if (lp == null)
+		{
+			return;
+		}
+
+		int param0 = lp.getSceneX();
+		int param1 = lp.getSceneY();
 		if (obj instanceof GameObject)
 		{
 			Point sceneMin = ((GameObject) obj).getSceneMinLocation();
@@ -1076,23 +1093,66 @@ public class NatureAltarScriptPlugin extends Plugin
 			}
 		}
 
-		Point clickPoint = getObjectClickPoint(obj);
-		if (clickPoint != null)
+		int identifier = obj.getId() > 0 ? obj.getId() : defaultId;
+		MenuAction menuAction = MenuAction.GAME_OBJECT_FIRST_OPTION;
+		String actualOption = defaultOption;
+		String actualTarget = defaultTarget;
+
+		try
 		{
-			dispatchCanvasClick(clickPoint);
+			ObjectComposition def = client.getObjectDefinition(obj.getId());
+			if (def != null)
+			{
+				if (def.getImpostorIds() != null && def.getImpostor() != null)
+				{
+					def = def.getImpostor();
+				}
+				if (def != null)
+				{
+					if (def.getName() != null && !def.getName().isEmpty())
+					{
+						actualTarget = def.getName();
+					}
+					String[] actions = def.getActions();
+					if (actions != null)
+					{
+						for (int i = 0; i < actions.length; i++)
+						{
+							if (actions[i] != null && !actions[i].isEmpty() && !actions[i].equalsIgnoreCase("Examine"))
+							{
+								actualOption = actions[i];
+								switch (i)
+								{
+									case 0: menuAction = MenuAction.GAME_OBJECT_FIRST_OPTION; break;
+									case 1: menuAction = MenuAction.GAME_OBJECT_SECOND_OPTION; break;
+									case 2: menuAction = MenuAction.GAME_OBJECT_THIRD_OPTION; break;
+									case 3: menuAction = MenuAction.GAME_OBJECT_FOURTH_OPTION; break;
+									case 4: menuAction = MenuAction.GAME_OBJECT_FIFTH_OPTION; break;
+								}
+								break;
+							}
+						}
+					}
+				}
+			}
 		}
-		else
+		catch (Exception ignored)
 		{
-			client.menuAction(
-				param0,
-				param1,
-				MenuAction.GAME_OBJECT_FIRST_OPTION,
-				objectId,
-				0,
-				option,
-				targetName
-			);
 		}
+
+		log.info("Interacting with GameObject '{}' (ID {}) via menuAction {} option '{}' at scene ({}, {})",
+			actualTarget, identifier, menuAction, actualOption, param0, param1);
+
+		// Directly invoke game object menu action (RED CLICK)
+		client.menuAction(
+			param0,
+			param1,
+			menuAction,
+			identifier,
+			0,
+			actualOption,
+			actualTarget
+		);
 	}
 
 	private Point getObjectClickPoint(TileObject obj)
