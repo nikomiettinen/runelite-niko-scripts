@@ -8,6 +8,7 @@ import com.google.inject.Provides;
 import java.awt.Canvas;
 import java.awt.Color;
 import java.awt.Rectangle;
+import java.awt.Shape;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.util.Arrays;
@@ -19,7 +20,11 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
+import net.runelite.api.Constants;
+import net.runelite.api.DecorativeObject;
+import net.runelite.api.GameObject;
 import net.runelite.api.GameState;
+import net.runelite.api.GroundObject;
 import net.runelite.api.InventoryID;
 import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
@@ -27,10 +32,14 @@ import net.runelite.api.ItemContainer;
 import net.runelite.api.ItemID;
 import net.runelite.api.MenuAction;
 import net.runelite.api.NPC;
+import net.runelite.api.ObjectComposition;
 import net.runelite.api.Perspective;
 import net.runelite.api.Point;
 import net.runelite.api.Player;
+import net.runelite.api.Tile;
+import net.runelite.api.TileObject;
 import net.runelite.api.Varbits;
+import net.runelite.api.WallObject;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.GameTick;
@@ -51,8 +60,8 @@ import net.runelite.client.ui.overlay.OverlayManager;
 @Slf4j
 @PluginDescriptor(
 	name = "Nature Altar Script",
-	description = "Runs back and forth between Karamja General Store and Nature Altar, un-noting pure essence with Aisles",
-	tags = {"nature", "altar", "karamja", "runecraft", "runner", "store", "aisles", "essence"}
+	description = "Runs back and forth between Karamja General Store and Nature Altar, un-noting pure essence with Aisles and entering ruins with Nature talisman",
+	tags = {"nature", "altar", "karamja", "runecraft", "runner", "store", "aisles", "essence", "ruins"}
 )
 public class NatureAltarScriptPlugin extends Plugin
 {
@@ -62,6 +71,9 @@ public class NatureAltarScriptPlugin extends Plugin
 
 	// NPC Aisles at Karamja General store
 	public static final int AISLES_NPC_ID = 2134;
+
+	// Mysterious ruins object ID
+	public static final int MYSTERIOUS_RUINS_ID = 34821;
 
 	// Exact route specified by user (27 waypoints)
 	private static final WorldPoint[] POSITIONS = {
@@ -107,6 +119,8 @@ public class NatureAltarScriptPlugin extends Plugin
 	{
 		IDLE,
 		RUNNING_TO_ALTAR,
+		ENTERING_RUINS,
+		INSIDE_ALTAR,
 		RUNNING_TO_STORE,
 		UNNOTING_AT_STORE,
 		PAUSED_AT_ENDPOINT
@@ -213,6 +227,10 @@ public class NatureAltarScriptPlugin extends Plugin
 		}
 	}
 
+	/**
+	 * Intelligent state detection and recovery:
+	 * Recognizes where the player is and whether pure essence is already unnoted.
+	 */
 	private void initializeRun()
 	{
 		Player localPlayer = client.getLocalPlayer();
@@ -222,24 +240,85 @@ public class NatureAltarScriptPlugin extends Plugin
 		}
 
 		WorldPoint playerLoc = localPlayer.getWorldLocation();
-		int distToStore = playerLoc.distanceTo(STORE_LOCATION);
-		int distToAltar = playerLoc.distanceTo(NATURE_ALTAR);
-
 		unnotedEssenceCount = countUnnotedEssence();
 
-		// If closer to store and we have noted essence but no unnoted essence, un-note first
-		if (distToStore <= distToAltar && config.unnoteEssence() && hasNotedEssence() && unnotedEssenceCount == 0)
+		// 1. If already inside Nature Altar temple
+		if (isInsideNatureAltar(playerLoc))
+		{
+			state = State.INSIDE_ALTAR;
+			status = "INSIDE NATURE ALTAR";
+			statusColor = Color.GREEN;
+			sendGameMessage("Sijainti hahmotettu: Sisällä Nature Altarilla!");
+			return;
+		}
+
+		// 2. If player has unnoted Pure Essence in inventory (unnotedEssenceCount > 0)
+		if (unnotedEssenceCount > 0)
+		{
+			// If already close to Mysterious ruins (within 8 tiles)
+			if (playerLoc.distanceTo(NATURE_ALTAR) <= 8)
+			{
+				log.info("Pure essence in inventory ({}) and near ruins -> Continuing directly inside!", unnotedEssenceCount);
+				state = State.ENTERING_RUINS;
+				status = "ENTERING RUINS (TALISMAN)";
+				statusColor = Color.YELLOW;
+				sendGameMessage(String.format("Pure essencet (%d kpl) inventoryssä ja lähellä ruinsia! Jatketaan suoraan sisään...", unnotedEssenceCount));
+				enterMysteriousRuins();
+				return;
+			}
+
+			// Otherwise continue route towards Altar
+			int closestIdx = findClosestWaypointIndex(playerLoc);
+			state = State.RUNNING_TO_ALTAR;
+			if (playerLoc.equals(POSITIONS[closestIdx]) && closestIdx < POSITIONS.length - 1)
+			{
+				currentWaypointIndex = closestIdx + 1;
+			}
+			else
+			{
+				currentWaypointIndex = closestIdx;
+			}
+			status = "RUNNING TO NATURE ALTAR";
+			statusColor = Color.CYAN;
+			sendGameMessage(String.format("Pure essencet (%d kpl) inventoryssä! Jatketaan kohti Alttaria (WP %d/%d).",
+				unnotedEssenceCount, currentWaypointIndex + 1, POSITIONS.length));
+			walkToWorldPoint(POSITIONS[currentWaypointIndex]);
+			return;
+		}
+
+		// 3. Player does NOT have unnoted Pure Essence (unnotedEssenceCount == 0)
+		// If near General Store and we have noted essence: un-note first
+		if (playerLoc.distanceTo(STORE_LOCATION) <= 4 && config.unnoteEssence() && hasNotedEssence())
 		{
 			state = State.UNNOTING_AT_STORE;
 			status = "UN-NOTING ESSENCE WITH AISLES";
 			statusColor = Color.YELLOW;
 			unnoteAttempts = 0;
 			actionCooldownTicks = 1;
-			sendGameMessage("At General Store: un-noting Pure Essence with Aisles first...");
+			sendGameMessage("General Storella: un-notetetaan Pure Essence Aislesin kanssa (Option 3)...");
 			return;
 		}
 
-		// Find closest waypoint along the predefined route
+		// Otherwise run towards General Store
+		int closestIdx = findClosestWaypointIndex(playerLoc);
+		state = State.RUNNING_TO_STORE;
+		if (playerLoc.equals(POSITIONS[closestIdx]) && closestIdx > 0)
+		{
+			currentWaypointIndex = closestIdx - 1;
+		}
+		else
+		{
+			currentWaypointIndex = closestIdx;
+		}
+		status = "RUNNING TO GENERAL STORE";
+		statusColor = Color.CYAN;
+		sendGameMessage(String.format("Ei unnotettua essenceä. Juostaan General Storelle (WP %d/%d).",
+			currentWaypointIndex + 1, POSITIONS.length));
+		walkToWorldPoint(POSITIONS[currentWaypointIndex]);
+	}
+
+	private int findClosestWaypointIndex(WorldPoint playerLoc)
+	{
 		int closestIdx = 0;
 		int bestDist = Integer.MAX_VALUE;
 		for (int i = 0; i < POSITIONS.length; i++)
@@ -251,28 +330,7 @@ public class NatureAltarScriptPlugin extends Plugin
 				closestIdx = i;
 			}
 		}
-
-		// If closer to store than altar, head towards altar
-		if (distToStore <= distToAltar)
-		{
-			state = State.RUNNING_TO_ALTAR;
-			currentWaypointIndex = Math.min(POSITIONS.length - 1, closestIdx + (closestIdx == 0 ? 1 : 0));
-			status = "RUNNING TO NATURE ALTAR";
-			statusColor = Color.CYAN;
-			sendGameMessage("Starting run to Nature Altar! Starting at WP " + (currentWaypointIndex + 1));
-		}
-		else
-		{
-			state = State.RUNNING_TO_STORE;
-			currentWaypointIndex = Math.max(0, closestIdx - (closestIdx == POSITIONS.length - 1 ? 1 : 0));
-			status = "RUNNING TO GENERAL STORE";
-			statusColor = Color.CYAN;
-			sendGameMessage("Starting run to General Store! Starting at WP " + (currentWaypointIndex + 1));
-		}
-
-		stuckTicks = 0;
-		actionCooldownTicks = 0;
-		walkToWorldPoint(POSITIONS[currentWaypointIndex]);
+		return closestIdx;
 	}
 
 	@Subscribe
@@ -306,7 +364,7 @@ public class NatureAltarScriptPlugin extends Plugin
 
 		WorldPoint playerLoc = localPlayer.getWorldLocation();
 
-		// Check if stuck
+		// Check if stuck / not moving
 		if (previousWorldLoc != null && previousWorldLoc.equals(playerLoc))
 		{
 			stuckTicks++;
@@ -339,10 +397,25 @@ public class NatureAltarScriptPlugin extends Plugin
 			handlePotions();
 		}
 
+		// State correction check
+		if (state == State.RUNNING_TO_STORE && unnotedEssenceCount > 0 && playerLoc.distanceTo(NATURE_ALTAR) < 14)
+		{
+			log.info("Detected unnoted essence near ruins while in RUNNING_TO_STORE, switching to ENTERING_RUINS");
+			state = State.ENTERING_RUINS;
+		}
+
 		switch (state)
 		{
 			case RUNNING_TO_ALTAR:
 				handleRunningToAltar(playerLoc);
+				break;
+
+			case ENTERING_RUINS:
+				handleEnteringRuins(playerLoc);
+				break;
+
+			case INSIDE_ALTAR:
+				handleInsideAltar(playerLoc);
 				break;
 
 			case RUNNING_TO_STORE:
@@ -358,69 +431,165 @@ public class NatureAltarScriptPlugin extends Plugin
 		}
 	}
 
+	/**
+	 * Strictly waits until the player arrives at the currently clicked waypoint tile before clicking the next!
+	 * Once arrived at the last waypoint tile (2869, 3012, 0), uses Nature talisman on Mysterious ruins (ID 34821).
+	 */
 	private void handleRunningToAltar(WorldPoint playerLoc)
 	{
+		// If player already reached near the ruins (within 2 tiles)
+		if (playerLoc.distanceTo(NATURE_ALTAR) <= 2 || (currentWaypointIndex >= POSITIONS.length - 1 && playerLoc.equals(NATURE_ALTAR)))
+		{
+			log.info("Arrived at final waypoint / Mysterious ruins tile ({})! Entering ruins...", NATURE_ALTAR);
+			state = State.ENTERING_RUINS;
+			actionCooldownTicks = 1;
+			enterMysteriousRuins();
+			return;
+		}
+
 		WorldPoint targetWp = POSITIONS[currentWaypointIndex];
 		distanceToCurrentWaypoint = playerLoc.distanceTo(targetWp);
 
-		// Check if arrived at overall destination (Nature Altar)
-		if (playerLoc.distanceTo(NATURE_ALTAR) <= 3 || (currentWaypointIndex == POSITIONS.length - 1 && distanceToCurrentWaypoint <= 3))
+		// Wait until the player has arrived at this specific waypoint tile
+		boolean arrivedAtWaypoint = playerLoc.equals(targetWp) || (distanceToCurrentWaypoint <= 1 && stuckTicks >= 3);
+
+		if (arrivedAtWaypoint)
+		{
+			// Player reached this tile: advance to next waypoint tile
+			if (currentWaypointIndex >= POSITIONS.length - 1)
+			{
+				log.info("Reached last tile ({})! Entering ruins with Nature talisman...", targetWp);
+				state = State.ENTERING_RUINS;
+				actionCooldownTicks = 1;
+				enterMysteriousRuins();
+				return;
+			}
+
+			currentWaypointIndex++;
+			targetWp = POSITIONS[currentWaypointIndex];
+			distanceToCurrentWaypoint = playerLoc.distanceTo(targetWp);
+			log.info("Arrived at tile. Now advancing to next waypoint {}/{} at {}",
+				currentWaypointIndex + 1, POSITIONS.length, targetWp);
+
+			status = "TO ALTAR (WP " + (currentWaypointIndex + 1) + "/" + POSITIONS.length + ")";
+			statusColor = Color.CYAN;
+			walkToWorldPoint(targetWp);
+			actionCooldownTicks = 1;
+			stuckTicks = 0;
+			return;
+		}
+
+		// Player has not yet reached the targeted tile: WAIT!
+		// Only re-click if character has completely stopped moving
+		if (stuckTicks >= 4)
+		{
+			log.info("Player stopped moving before reaching WP {}/{} (dist: {}), re-clicking...",
+				currentWaypointIndex + 1, POSITIONS.length, distanceToCurrentWaypoint);
+			walkToWorldPoint(targetWp);
+			stuckTicks = 0;
+		}
+	}
+
+	/**
+	 * Entering Mysterious ruins (ID 34821) with Nature talisman.
+	 */
+	private void handleEnteringRuins(WorldPoint playerLoc)
+	{
+		// 1. Check if already inside Nature Altar temple (Y > 4000)
+		if (isInsideNatureAltar(playerLoc))
 		{
 			lapsCompleted++;
-			log.info("Arrived at Nature Altar (2869, 3012)! Trips completed: {}", lapsCompleted);
-			sendGameMessage(String.format("Arrived at Nature Altar! Turning around to General Store. (Trips: %d)", lapsCompleted));
+			log.info("Successfully entered Nature Altar interior at {}! Trips completed: {}", playerLoc, lapsCompleted);
+			sendGameMessage(String.format("Päästiin sisälle Nature Altarille! (Kierrokset: %d)", lapsCompleted));
+			state = State.INSIDE_ALTAR;
+			status = "INSIDE NATURE ALTAR";
+			statusColor = Color.GREEN;
+			actionCooldownTicks = 3;
+			return;
+		}
+
+		// 2. If no unnoted essence is left, return to store
+		if (unnotedEssenceCount == 0 && !hasUnnotedEssence())
+		{
+			log.info("No unnoted essence in inventory. Heading back to General Store...");
 			state = State.RUNNING_TO_STORE;
-			currentWaypointIndex = POSITIONS.length - 2;
-			status = "RUNNING TO GENERAL STORE";
-			statusColor = Color.CYAN;
-			pauseTicks = Math.max(0, config.delayAtDestination());
+			currentWaypointIndex = POSITIONS.length - 1;
 			walkToWorldPoint(POSITIONS[currentWaypointIndex]);
 			return;
 		}
 
-		// Advance to next waypoint when within 4 tiles for smooth running curve
-		if (distanceToCurrentWaypoint <= 4)
+		if (actionCooldownTicks > 0)
 		{
-			if (currentWaypointIndex < POSITIONS.length - 1)
-			{
-				currentWaypointIndex++;
-				targetWp = POSITIONS[currentWaypointIndex];
-				distanceToCurrentWaypoint = playerLoc.distanceTo(targetWp);
-				log.info("Advancing to Altar waypoint {}/{} at {}", currentWaypointIndex + 1, POSITIONS.length, targetWp);
-				walkToWorldPoint(targetWp);
-				actionCooldownTicks = 2;
-				return;
-			}
+			return;
 		}
 
-		// Periodic heartbeat walk or anti-stuck re-click
-		if (actionCooldownTicks <= 0 || stuckTicks >= 3)
+		// 3. Use Nature talisman on Mysterious ruins (ID 34821)
+		enterMysteriousRuins();
+		actionCooldownTicks = 3;
+	}
+
+	private void handleInsideAltar(WorldPoint playerLoc)
+	{
+		// If player leaves altar through portal back to surface (Y < 4000):
+		if (!isInsideNatureAltar(playerLoc))
 		{
-			log.info("Walking towards waypoint {}/{} (dist: {}, stuckTicks: {})", currentWaypointIndex + 1, POSITIONS.length, distanceToCurrentWaypoint, stuckTicks);
-			status = "TO ALTAR (WP " + (currentWaypointIndex + 1) + "/" + POSITIONS.length + ")";
-			statusColor = Color.CYAN;
-			walkToWorldPoint(targetWp);
-			actionCooldownTicks = 3;
-			if (stuckTicks >= 5)
+			log.info("Exited Nature Altar back to surface at {}. Checking state...", playerLoc);
+			if (unnotedEssenceCount > 0)
 			{
-				stuckTicks = 0;
+				state = State.ENTERING_RUINS;
 			}
+			else
+			{
+				state = State.RUNNING_TO_STORE;
+				currentWaypointIndex = POSITIONS.length - 1;
+				walkToWorldPoint(POSITIONS[currentWaypointIndex]);
+			}
+			return;
+		}
+
+		if (unnotedEssenceCount == 0)
+		{
+			status = "ALTAR DONE (0 ESSENCE)";
+			statusColor = Color.GREEN;
+		}
+		else
+		{
+			status = "INSIDE ALTAR (" + unnotedEssenceCount + " ESSENCE)";
+			statusColor = Color.GREEN;
 		}
 	}
 
+	private boolean isInsideNatureAltar(WorldPoint loc)
+	{
+		if (loc == null)
+		{
+			return false;
+		}
+		// Nature altar interior is in a separate plane/dungeon region (Y >= 4000)
+		return loc.getY() >= 4000;
+	}
+
+	/**
+	 * Strictly waits until player reaches each waypoint tile before clicking the next towards General Store.
+	 */
 	private void handleRunningToStore(WorldPoint playerLoc)
 	{
+		// If player already has unnoted Pure Essence, turn around to Altar immediately!
+		if (unnotedEssenceCount > 0)
+		{
+			log.info("Player already has {} unnoted essence! Correcting direction to Nature Altar...", unnotedEssenceCount);
+			state = State.RUNNING_TO_ALTAR;
+			return;
+		}
+
 		WorldPoint targetWp = POSITIONS[currentWaypointIndex];
 		distanceToCurrentWaypoint = playerLoc.distanceTo(targetWp);
 
 		// Check if arrived at overall destination (General Store)
-		if (playerLoc.distanceTo(STORE_LOCATION) <= 3 || (currentWaypointIndex == 0 && distanceToCurrentWaypoint <= 3))
+		if (playerLoc.distanceTo(STORE_LOCATION) <= 2 || (currentWaypointIndex <= 0 && playerLoc.equals(STORE_LOCATION)))
 		{
-			lapsCompleted++;
 			log.info("Arrived at Karamja General Store (2767, 3121)! Trips completed: {}", lapsCompleted);
-			sendGameMessage(String.format("Arrived at General Store! (Trips: %d)", lapsCompleted));
 
-			// If configured to un-note essence, and we have noted essence but no unnoted essence
 			if (config.unnoteEssence() && hasNotedEssence() && unnotedEssenceCount == 0)
 			{
 				state = State.UNNOTING_AT_STORE;
@@ -431,7 +600,7 @@ public class NatureAltarScriptPlugin extends Plugin
 				return;
 			}
 
-			// Otherwise turn around directly to altar
+			// Direct turnaround if no un-noting needed
 			state = State.RUNNING_TO_ALTAR;
 			currentWaypointIndex = 1;
 			status = "RUNNING TO NATURE ALTAR";
@@ -441,33 +610,49 @@ public class NatureAltarScriptPlugin extends Plugin
 			return;
 		}
 
-		// Advance to next waypoint towards store
-		if (distanceToCurrentWaypoint <= 4)
+		// Wait until player arrives at this specific waypoint tile
+		boolean arrivedAtWaypoint = playerLoc.equals(targetWp) || (distanceToCurrentWaypoint <= 1 && stuckTicks >= 3);
+
+		if (arrivedAtWaypoint)
 		{
-			if (currentWaypointIndex > 0)
+			if (currentWaypointIndex <= 0)
 			{
-				currentWaypointIndex--;
-				targetWp = POSITIONS[currentWaypointIndex];
-				distanceToCurrentWaypoint = playerLoc.distanceTo(targetWp);
-				log.info("Advancing to Store waypoint {}/{} at {}", currentWaypointIndex + 1, POSITIONS.length, targetWp);
-				walkToWorldPoint(targetWp);
-				actionCooldownTicks = 2;
+				if (config.unnoteEssence() && hasNotedEssence() && unnotedEssenceCount == 0)
+				{
+					state = State.UNNOTING_AT_STORE;
+					status = "UN-NOTING ESSENCE WITH AISLES";
+					statusColor = Color.YELLOW;
+					unnoteAttempts = 0;
+					actionCooldownTicks = 1;
+					return;
+				}
+				state = State.RUNNING_TO_ALTAR;
+				currentWaypointIndex = 1;
+				walkToWorldPoint(POSITIONS[currentWaypointIndex]);
 				return;
 			}
-		}
 
-		// Periodic heartbeat walk or anti-stuck re-click
-		if (actionCooldownTicks <= 0 || stuckTicks >= 3)
-		{
-			log.info("Walking towards waypoint {}/{} (dist: {}, stuckTicks: {})", currentWaypointIndex + 1, POSITIONS.length, distanceToCurrentWaypoint, stuckTicks);
+			currentWaypointIndex--;
+			targetWp = POSITIONS[currentWaypointIndex];
+			distanceToCurrentWaypoint = playerLoc.distanceTo(targetWp);
+			log.info("Arrived at tile. Now advancing to next waypoint {}/{} at {}",
+				currentWaypointIndex + 1, POSITIONS.length, targetWp);
+
 			status = "TO STORE (WP " + (currentWaypointIndex + 1) + "/" + POSITIONS.length + ")";
 			statusColor = Color.CYAN;
 			walkToWorldPoint(targetWp);
-			actionCooldownTicks = 3;
-			if (stuckTicks >= 5)
-			{
-				stuckTicks = 0;
-			}
+			actionCooldownTicks = 1;
+			stuckTicks = 0;
+			return;
+		}
+
+		// Player has not yet reached the targeted tile: WAIT!
+		if (stuckTicks >= 4)
+		{
+			log.info("Player stopped moving before reaching WP {}/{} (dist: {}), re-clicking...",
+				currentWaypointIndex + 1, POSITIONS.length, distanceToCurrentWaypoint);
+			walkToWorldPoint(targetWp);
+			stuckTicks = 0;
 		}
 	}
 
@@ -522,6 +707,227 @@ public class NatureAltarScriptPlugin extends Plugin
 		// 4. Use noted Pure Essence on Aisles
 		useEssenceOnAisles(aisles);
 		actionCooldownTicks = 2;
+	}
+
+	/**
+	 * Uses Nature talisman in inventory on Mysterious ruins (ID 34821).
+	 */
+	private void enterMysteriousRuins()
+	{
+		int talismanSlot = findNatureTalismanSlot();
+		if (talismanSlot == -1)
+		{
+			log.warn("Nature talisman not found in inventory!");
+			status = "NO NATURE TALISMAN";
+			statusColor = Color.RED;
+			sendGameMessage("Huomio: Nature talisman puuttuu inventorystä!");
+			return;
+		}
+
+		ItemContainer inv = client.getItemContainer(InventoryID.INVENTORY);
+		Item talismanItem = inv != null ? inv.getItem(talismanSlot) : null;
+		int talismanId = talismanItem != null ? talismanItem.getId() : ItemID.NATURE_TALISMAN;
+
+		TileObject ruins = findMysteriousRuins();
+		if (ruins == null)
+		{
+			log.info("Mysterious ruins (ID {}) not found in scene yet, walking closer to {}", MYSTERIOUS_RUINS_ID, NATURE_ALTAR);
+			walkToWorldPoint(NATURE_ALTAR);
+			actionCooldownTicks = 2;
+			return;
+		}
+
+		LocalPoint lp = ruins.getLocalLocation();
+		if (lp == null)
+		{
+			return;
+		}
+
+		log.info("Using Nature talisman (slot {}, ID {}) on Mysterious ruins (ID {}) at scene ({}, {})",
+			talismanSlot, talismanId, MYSTERIOUS_RUINS_ID, lp.getSceneX(), lp.getSceneY());
+		status = "TALISMAN -> MYSTERIOUS RUINS";
+		statusColor = Color.YELLOW;
+
+		// 1. Select "Use" on Nature talisman in inventory
+		client.menuAction(
+			talismanSlot,
+			InterfaceID.Inventory.ITEMS,
+			MenuAction.WIDGET_TARGET,
+			0,
+			talismanId,
+			"Use",
+			"Nature talisman"
+		);
+
+		// 2. Click Mysterious ruins with talisman
+		client.menuAction(
+			lp.getSceneX(),
+			lp.getSceneY(),
+			MenuAction.WIDGET_TARGET_ON_GAME_OBJECT,
+			MYSTERIOUS_RUINS_ID,
+			0,
+			"Use",
+			"Use Nature talisman -> Mysterious ruins"
+		);
+
+		// 3. Dispatch canvas click if bounds available
+		Shape clickbox = ruins.getClickbox();
+		if (clickbox != null && clickbox.getBounds() != null)
+		{
+			Rectangle bounds = clickbox.getBounds();
+			if (bounds.width > 0 && bounds.height > 0)
+			{
+				Point p = new Point((int) bounds.getCenterX(), (int) bounds.getCenterY());
+				int cw = client.getCanvasWidth();
+				int ch = client.getCanvasHeight();
+				if (p.getX() >= 20 && p.getX() < (cw - 220) && p.getY() >= 20 && p.getY() < (ch - 160))
+				{
+					dispatchCanvasClick(p);
+				}
+			}
+		}
+	}
+
+	private TileObject findMysteriousRuins()
+	{
+		Tile[][][] tiles = client.getScene().getTiles();
+		int plane = client.getPlane();
+		if (tiles == null || plane >= tiles.length)
+		{
+			return null;
+		}
+
+		TileObject closestRuins = null;
+		int closestDist = Integer.MAX_VALUE;
+		Player localPlayer = client.getLocalPlayer();
+		WorldPoint playerLoc = localPlayer != null ? localPlayer.getWorldLocation() : null;
+
+		for (int x = 0; x < Constants.SCENE_SIZE; x++)
+		{
+			for (int y = 0; y < Constants.SCENE_SIZE; y++)
+			{
+				Tile tile = tiles[plane][x][y];
+				if (tile == null)
+				{
+					continue;
+				}
+
+				GameObject[] gameObjects = tile.getGameObjects();
+				if (gameObjects != null)
+				{
+					for (GameObject go : gameObjects)
+					{
+						if (go != null && isMysteriousRuins(go))
+						{
+							if (playerLoc == null)
+							{
+								return go;
+							}
+							int d = playerLoc.distanceTo(go.getWorldLocation());
+							if (d < closestDist)
+							{
+								closestDist = d;
+								closestRuins = go;
+							}
+						}
+					}
+				}
+
+				WallObject wall = tile.getWallObject();
+				if (wall != null && isMysteriousRuins(wall))
+				{
+					return wall;
+				}
+
+				GroundObject ground = tile.getGroundObject();
+				if (ground != null && isMysteriousRuins(ground))
+				{
+					return ground;
+				}
+
+				DecorativeObject deco = tile.getDecorativeObject();
+				if (deco != null && isMysteriousRuins(deco))
+				{
+					return deco;
+				}
+			}
+		}
+		return closestRuins;
+	}
+
+	private boolean isMysteriousRuins(TileObject obj)
+	{
+		if (obj.getId() == MYSTERIOUS_RUINS_ID)
+		{
+			return true;
+		}
+		try
+		{
+			ObjectComposition def = client.getObjectDefinition(obj.getId());
+			if (def != null)
+			{
+				if (def.getImpostorIds() != null)
+				{
+					for (int impId : def.getImpostorIds())
+					{
+						if (impId == MYSTERIOUS_RUINS_ID)
+						{
+							return true;
+						}
+					}
+					def = def.getImpostor();
+				}
+				if (def != null)
+				{
+					if (def.getId() == MYSTERIOUS_RUINS_ID)
+					{
+						return true;
+					}
+					String name = def.getName();
+					if (name != null && name.toLowerCase().contains("mysterious ruins"))
+					{
+						return true;
+					}
+				}
+			}
+		}
+		catch (Exception ignored)
+		{
+		}
+		return false;
+	}
+
+	private int findNatureTalismanSlot()
+	{
+		ItemContainer inv = client.getItemContainer(InventoryID.INVENTORY);
+		if (inv == null)
+		{
+			return -1;
+		}
+		Item[] items = inv.getItems();
+		for (int i = 0; i < items.length; i++)
+		{
+			if (items[i] != null && items[i].getId() > 0)
+			{
+				int id = items[i].getId();
+				if (id == ItemID.NATURE_TALISMAN || id == 1462)
+				{
+					return i;
+				}
+				try
+				{
+					ItemComposition comp = client.getItemDefinition(id);
+					if (comp != null && comp.getName() != null && comp.getName().equalsIgnoreCase("Nature talisman"))
+					{
+						return i;
+					}
+				}
+				catch (Exception ignored)
+				{
+				}
+			}
+		}
+		return -1;
 	}
 
 	private NPC findAisles()
