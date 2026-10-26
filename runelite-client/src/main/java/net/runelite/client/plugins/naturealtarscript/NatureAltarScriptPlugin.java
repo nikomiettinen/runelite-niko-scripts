@@ -7,8 +7,6 @@ package net.runelite.client.plugins.naturealtarscript;
 import com.google.inject.Provides;
 import java.awt.Canvas;
 import java.awt.Color;
-import java.awt.Rectangle;
-import java.awt.Shape;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.util.Arrays;
@@ -711,6 +709,7 @@ public class NatureAltarScriptPlugin extends Plugin
 
 	/**
 	 * Uses Nature talisman in inventory on Mysterious ruins (ID 34821).
+	 * Strictly uses menuAction without raw canvas mouse clicks, preventing yellow-click ground walk overrides!
 	 */
 	private void enterMysteriousRuins()
 	{
@@ -743,9 +742,35 @@ public class NatureAltarScriptPlugin extends Plugin
 			return;
 		}
 
-		log.info("Using Nature talisman (slot {}, ID {}) on Mysterious ruins (ID {}) at scene ({}, {})",
-			talismanSlot, talismanId, MYSTERIOUS_RUINS_ID, lp.getSceneX(), lp.getSceneY());
-		status = "TALISMAN -> MYSTERIOUS RUINS";
+		int param0 = lp.getSceneX();
+		int param1 = lp.getSceneY();
+		if (ruins instanceof GameObject)
+		{
+			Point sceneMin = ((GameObject) ruins).getSceneMinLocation();
+			if (sceneMin != null)
+			{
+				param0 = sceneMin.getX();
+				param1 = sceneMin.getY();
+			}
+		}
+
+		int ruinsId = ruins.getId();
+		String ruinsName = "Mysterious ruins";
+		try
+		{
+			ObjectComposition def = client.getObjectDefinition(ruinsId);
+			if (def != null && def.getName() != null && !def.getName().isEmpty())
+			{
+				ruinsName = def.getName();
+			}
+		}
+		catch (Exception ignored)
+		{
+		}
+
+		log.info("Using Nature talisman (slot {}, ID {}) on {} (ID {}) at scene ({}, {})",
+			talismanSlot, talismanId, ruinsName, ruinsId, param0, param1);
+		status = "USE TALISMAN -> " + ruinsName.toUpperCase();
 		statusColor = Color.YELLOW;
 
 		// 1. Select "Use" on Nature talisman in inventory
@@ -759,33 +784,19 @@ public class NatureAltarScriptPlugin extends Plugin
 			"Nature talisman"
 		);
 
-		// 2. Click Mysterious ruins with talisman
+		// 2. Click Mysterious ruins with talisman (WIDGET_TARGET_ON_GAME_OBJECT)
 		client.menuAction(
-			lp.getSceneX(),
-			lp.getSceneY(),
+			param0,
+			param1,
 			MenuAction.WIDGET_TARGET_ON_GAME_OBJECT,
-			MYSTERIOUS_RUINS_ID,
+			ruinsId,
 			0,
 			"Use",
-			"Use Nature talisman -> Mysterious ruins"
+			"Use Nature talisman -> " + ruinsName
 		);
 
-		// 3. Dispatch canvas click if bounds available
-		Shape clickbox = ruins.getClickbox();
-		if (clickbox != null && clickbox.getBounds() != null)
-		{
-			Rectangle bounds = clickbox.getBounds();
-			if (bounds.width > 0 && bounds.height > 0)
-			{
-				Point p = new Point((int) bounds.getCenterX(), (int) bounds.getCenterY());
-				int cw = client.getCanvasWidth();
-				int ch = client.getCanvasHeight();
-				if (p.getX() >= 20 && p.getX() < (cw - 220) && p.getY() >= 20 && p.getY() < (ch - 160))
-				{
-					dispatchCanvasClick(p);
-				}
-			}
-		}
+		// Fallback: If ruins also has a direct "Enter" option (e.g. if wearing tiara)
+		// We do not dispatch raw canvas clicks because raw mouse events trigger a "Walk here" yellow click!
 	}
 
 	private TileObject findMysteriousRuins()
@@ -857,7 +868,11 @@ public class NatureAltarScriptPlugin extends Plugin
 
 	private boolean isMysteriousRuins(TileObject obj)
 	{
-		if (obj.getId() == MYSTERIOUS_RUINS_ID)
+		if (obj == null)
+		{
+			return false;
+		}
+		if (obj.getId() == MYSTERIOUS_RUINS_ID || obj.getId() == 34821)
 		{
 			return true;
 		}
@@ -866,27 +881,36 @@ public class NatureAltarScriptPlugin extends Plugin
 			ObjectComposition def = client.getObjectDefinition(obj.getId());
 			if (def != null)
 			{
+				if (def.getId() == MYSTERIOUS_RUINS_ID || def.getId() == 34821)
+				{
+					return true;
+				}
+				String name = def.getName();
+				if (name != null && (name.equalsIgnoreCase("Mysterious ruins") || name.toLowerCase().contains("ruins")))
+				{
+					return true;
+				}
 				if (def.getImpostorIds() != null)
 				{
 					for (int impId : def.getImpostorIds())
 					{
-						if (impId == MYSTERIOUS_RUINS_ID)
+						if (impId == MYSTERIOUS_RUINS_ID || impId == 34821)
 						{
 							return true;
 						}
 					}
-					def = def.getImpostor();
-				}
-				if (def != null)
-				{
-					if (def.getId() == MYSTERIOUS_RUINS_ID)
+					ObjectComposition imp = def.getImpostor();
+					if (imp != null)
 					{
-						return true;
-					}
-					String name = def.getName();
-					if (name != null && name.toLowerCase().contains("mysterious ruins"))
-					{
-						return true;
+						if (imp.getId() == MYSTERIOUS_RUINS_ID || imp.getId() == 34821)
+						{
+							return true;
+						}
+						String impName = imp.getName();
+						if (impName != null && (impName.equalsIgnoreCase("Mysterious ruins") || impName.toLowerCase().contains("ruins")))
+						{
+							return true;
+						}
 					}
 				}
 			}
@@ -894,6 +918,14 @@ public class NatureAltarScriptPlugin extends Plugin
 		catch (Exception ignored)
 		{
 		}
+
+		// Also match by world location around Nature Altar ruins (x: 2865..2873, y: 3014..3025)
+		WorldPoint wp = obj.getWorldLocation();
+		if (wp != null && wp.getX() >= 2865 && wp.getX() <= 2873 && wp.getY() >= 3014 && wp.getY() <= 3025)
+		{
+			return true;
+		}
+
 		return false;
 	}
 
@@ -917,7 +949,7 @@ public class NatureAltarScriptPlugin extends Plugin
 				try
 				{
 					ItemComposition comp = client.getItemDefinition(id);
-					if (comp != null && comp.getName() != null && comp.getName().equalsIgnoreCase("Nature talisman"))
+					if (comp != null && comp.getName() != null && comp.getName().toLowerCase().contains("nature talisman"))
 					{
 						return i;
 					}
@@ -1025,7 +1057,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		// 2. Dispatch canvas click on option if bounds available
 		if (targetWidget != null)
 		{
-			Rectangle bounds = targetWidget.getBounds();
+			java.awt.Rectangle bounds = targetWidget.getBounds();
 			if (bounds != null && bounds.width > 0 && bounds.height > 0)
 			{
 				dispatchCanvasClick(new Point((int) bounds.getCenterX(), (int) bounds.getCenterY()));
