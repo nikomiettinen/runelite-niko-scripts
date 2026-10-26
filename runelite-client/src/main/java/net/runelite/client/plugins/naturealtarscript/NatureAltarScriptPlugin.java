@@ -56,20 +56,38 @@ import net.runelite.client.ui.overlay.OverlayManager;
 public class NatureAltarScriptPlugin extends Plugin
 {
 	// Endpoint destinations specified by user
-	public static final WorldPoint STORE_LOCATION = new WorldPoint(2766, 3120, 0);
-	public static final WorldPoint NATURE_ALTAR = new WorldPoint(2869, 3016, 0);
+	public static final WorldPoint STORE_LOCATION = new WorldPoint(2767, 3121, 0);
+	public static final WorldPoint NATURE_ALTAR = new WorldPoint(2869, 3012, 0);
 
-	// Full path connecting General Store and Nature Altar without obstacle collisions
+	// Exact route specified by user
 	private static final WorldPoint[] POSITIONS = {
-		new WorldPoint(2766, 3120, 0), // 0: Karamja General Store (Jiminua)
-		new WorldPoint(2774, 3113, 0), // 1: Path exiting store area south-east
-		new WorldPoint(2792, 3105, 0), // 2: Iron/coal mine bypass
-		new WorldPoint(2811, 3097, 0), // 3: North of village fence
-		new WorldPoint(2828, 3087, 0), // 4: Jungle clearing corridor
-		new WorldPoint(2845, 3075, 0), // 5: Approaching coast treeline
-		new WorldPoint(2856, 3056, 0), // 6: Treeline south
-		new WorldPoint(2862, 3038, 0), // 7: South towards altar clearing
-		new WorldPoint(2869, 3016, 0)  // 8: Nature Altar ruins
+		new WorldPoint(2767, 3121, 0),
+		new WorldPoint(2767, 3112, 0),
+		new WorldPoint(2764, 3100, 0),
+		new WorldPoint(2764, 3092, 0),
+		new WorldPoint(2765, 3084, 0),
+		new WorldPoint(2766, 3078, 0),
+		new WorldPoint(2764, 3072, 0),
+		new WorldPoint(2765, 3063, 0),
+		new WorldPoint(2766, 3055, 0),
+		new WorldPoint(2769, 3050, 0),
+		new WorldPoint(2775, 3047, 0),
+		new WorldPoint(2785, 3047, 0),
+		new WorldPoint(2791, 3046, 0),
+		new WorldPoint(2797, 3044, 0),
+		new WorldPoint(2800, 3041, 0),
+		new WorldPoint(2804, 3035, 0),
+		new WorldPoint(2810, 3028, 0),
+		new WorldPoint(2816, 3025, 0),
+		new WorldPoint(2825, 3016, 0),
+		new WorldPoint(2829, 3012, 0),
+		new WorldPoint(2833, 3012, 0),
+		new WorldPoint(2845, 3008, 0),
+		new WorldPoint(2853, 3007, 0),
+		new WorldPoint(2860, 3008, 0),
+		new WorldPoint(2867, 3008, 0),
+		new WorldPoint(2869, 3010, 0),
+		new WorldPoint(2869, 3012, 0)
 	};
 
 	private static final Set<Integer> STAMINA_POTION_IDS = new HashSet<>(Arrays.asList(
@@ -321,7 +339,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		if (playerLoc.distanceTo(NATURE_ALTAR) <= 4 || (currentWaypointIndex == POSITIONS.length - 1 && distanceToCurrentWaypoint <= 3))
 		{
 			lapsCompleted++;
-			log.info("Arrived at Nature Altar (2869, 3016)! Trips completed: {}", lapsCompleted);
+			log.info("Arrived at Nature Altar (2869, 3012)! Trips completed: {}", lapsCompleted);
 			sendGameMessage(String.format("Arrived at Nature Altar! Turning around to General Store. (Trips: %d)", lapsCompleted));
 			state = State.RUNNING_TO_STORE;
 			currentWaypointIndex = POSITIONS.length - 2;
@@ -371,7 +389,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		if (playerLoc.distanceTo(STORE_LOCATION) <= 4 || (currentWaypointIndex == 0 && distanceToCurrentWaypoint <= 3))
 		{
 			lapsCompleted++;
-			log.info("Arrived at Karamja General Store (2766, 3120)! Trips completed: {}", lapsCompleted);
+			log.info("Arrived at Karamja General Store (2767, 3121)! Trips completed: {}", lapsCompleted);
 			sendGameMessage(String.format("Arrived at General Store! Turning around to Nature Altar. (Trips: %d)", lapsCompleted));
 			state = State.RUNNING_TO_ALTAR;
 			currentWaypointIndex = 1;
