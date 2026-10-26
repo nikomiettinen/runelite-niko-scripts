@@ -190,6 +190,7 @@ public class NatureAltarScriptPlugin extends Plugin
 	private boolean isTalismanActivated = false;
 	private RuinsStep ruinsStep = RuinsStep.WAIT_ARRIVAL;
 	private int talismanActivationAttempts = 0;
+	private int runToggleCooldown = 0;
 	private WorldPoint previousWorldLoc = null;
 
 	@Provides
@@ -210,6 +211,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		isTalismanActivated = false;
 		ruinsStep = RuinsStep.WAIT_ARRIVAL;
 		talismanActivationAttempts = 0;
+		runToggleCooldown = 0;
 		previousWorldLoc = null;
 		log.info("Nature Altar Script started!");
 		sendGameMessage("Plugin started. Toggle 'Start Running Script' to begin.");
@@ -1969,11 +1971,81 @@ public class NatureAltarScriptPlugin extends Plugin
 
 	private void handleRunEnergy()
 	{
-		int minEnergy = config.minRunEnergy() * 100;
-		if (client.getEnergy() >= minEnergy && client.getVarpValue(VarPlayerID.OPTION_RUN) == 0)
+		if (runToggleCooldown > 0)
 		{
-			log.info("Toggling run ON (Energy: {}%)", energyPercent);
+			runToggleCooldown--;
+			return;
+		}
+
+		int minEnergy = Math.max(1, config.minRunEnergy()) * 100;
+		int currentEnergy = client.getEnergy();
+		int runMode = client.getVarpValue(VarPlayerID.OPTION_RUN);
+
+		if (currentEnergy >= minEnergy && runMode == 0)
+		{
+			log.info("Toggling run ON (Energy: {}%, Min: {}%)", currentEnergy / 100, config.minRunEnergy());
+			toggleRun();
+			runToggleCooldown = 2; // Wait 2 ticks (1.2s) before checking again
+		}
+	}
+
+	private Widget getRunOrbWidget()
+	{
+		int[] candidateIds = {
+			InterfaceID.OrbsOsm.RUNBUTTON,      // 0x0381_0018 (Resizable Classic)
+			InterfaceID.OrbsOsmNomap.RUNBUTTON, // 0x0382_0019 (Resizable Modern)
+			InterfaceID.Orbs.RUNBUTTON,         // 0x00a0_001c (Fixed)
+			InterfaceID.OrbsNomap.RUNBUTTON     // 0x037f_001a (OrbsNomap)
+		};
+
+		for (int id : candidateIds)
+		{
+			Widget w = client.getWidget(id);
+			if (w != null && !w.isHidden() && w.getWidth() > 0 && w.getHeight() > 0)
+			{
+				return w;
+			}
+		}
+
+		for (int id : candidateIds)
+		{
+			Widget w = client.getWidget(id);
+			if (w != null && !w.isHidden())
+			{
+				return w;
+			}
+		}
+
+		return null;
+	}
+
+	private void toggleRun()
+	{
+		Widget runOrb = getRunOrbWidget();
+		if (runOrb != null)
+		{
+			int widgetId = runOrb.getId();
+			log.info("Toggling run ON on widget 0x{}", Integer.toHexString(widgetId));
+
+			// 1. Invoke menu action on active run orb widget
+			client.menuAction(1, widgetId, MenuAction.CC_OP, 1, -1, "Toggle Run", "");
+			client.menuAction(-1, widgetId, MenuAction.CC_OP, 1, -1, "Toggle Run", "");
+
+			// 2. Dispatch canvas click on orb center
+			Rectangle bounds = runOrb.getBounds();
+			if (bounds != null && bounds.width > 0 && bounds.height > 0)
+			{
+				Point center = new Point((int) bounds.getCenterX(), (int) bounds.getCenterY());
+				dispatchCanvasClick(center);
+			}
+		}
+		else
+		{
+			// Fallback: invoke across all known run orb IDs
+			client.menuAction(1, InterfaceID.OrbsOsm.RUNBUTTON, MenuAction.CC_OP, 1, -1, "Toggle Run", "");
+			client.menuAction(1, InterfaceID.OrbsOsmNomap.RUNBUTTON, MenuAction.CC_OP, 1, -1, "Toggle Run", "");
 			client.menuAction(1, InterfaceID.Orbs.RUNBUTTON, MenuAction.CC_OP, 1, -1, "Toggle Run", "");
+			client.menuAction(1, InterfaceID.OrbsNomap.RUNBUTTON, MenuAction.CC_OP, 1, -1, "Toggle Run", "");
 		}
 	}
 
