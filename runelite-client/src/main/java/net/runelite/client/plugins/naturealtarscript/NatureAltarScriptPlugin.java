@@ -131,7 +131,8 @@ public class NatureAltarScriptPlugin extends Plugin
 		WAIT_ARRIVAL,
 		ACTIVATE_TALISMAN,
 		WAIT_TALISMAN_ACTIVE,
-		CLICK_RUINS
+		CLICK_RUINS,
+		WAIT_ENTRY
 	}
 
 	@Inject
@@ -182,6 +183,7 @@ public class NatureAltarScriptPlugin extends Plugin
 	private int unnoteAttempts = 0;
 	private boolean isTalismanActivated = false;
 	private RuinsStep ruinsStep = RuinsStep.WAIT_ARRIVAL;
+	private int talismanActivationAttempts = 0;
 	private WorldPoint previousWorldLoc = null;
 
 	@Provides
@@ -201,6 +203,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		unnoteAttempts = 0;
 		isTalismanActivated = false;
 		ruinsStep = RuinsStep.WAIT_ARRIVAL;
+		talismanActivationAttempts = 0;
 		previousWorldLoc = null;
 		log.info("Nature Altar Script started!");
 		sendGameMessage("Plugin started. Toggle 'Start Running Script' to begin.");
@@ -215,6 +218,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		statusColor = Color.RED;
 		isTalismanActivated = false;
 		ruinsStep = RuinsStep.WAIT_ARRIVAL;
+		talismanActivationAttempts = 0;
 		log.info("Nature Altar Script stopped.");
 	}
 
@@ -276,6 +280,7 @@ public class NatureAltarScriptPlugin extends Plugin
 				log.info("Pure essence in inventory ({}) and at ruins -> Preparing to enter calmly!", unnotedEssenceCount);
 				state = State.ENTERING_RUINS;
 				ruinsStep = RuinsStep.WAIT_ARRIVAL;
+		talismanActivationAttempts = 0;
 				actionCooldownTicks = 2;
 				status = "AT RUINS (WAITING)";
 				statusColor = Color.YELLOW;
@@ -462,6 +467,7 @@ public class NatureAltarScriptPlugin extends Plugin
 			log.info("Arrived at final waypoint ({})! Preparing to enter ruins calmly...", NATURE_ALTAR);
 			state = State.ENTERING_RUINS;
 			ruinsStep = RuinsStep.WAIT_ARRIVAL;
+		talismanActivationAttempts = 0;
 			actionCooldownTicks = 2; // Calm 2-tick pause upon arrival
 			status = "AT RUINS (WAITING)";
 			statusColor = Color.YELLOW;
@@ -482,6 +488,7 @@ public class NatureAltarScriptPlugin extends Plugin
 				log.info("Reached last tile ({})! Preparing to enter ruins calmly...", targetWp);
 				state = State.ENTERING_RUINS;
 				ruinsStep = RuinsStep.WAIT_ARRIVAL;
+		talismanActivationAttempts = 0;
 				actionCooldownTicks = 2;
 				status = "AT RUINS (WAITING)";
 				statusColor = Color.YELLOW;
@@ -524,6 +531,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		{
 			isTalismanActivated = false;
 			ruinsStep = RuinsStep.WAIT_ARRIVAL;
+		talismanActivationAttempts = 0;
 			lapsCompleted++;
 			log.info("Successfully entered Nature Altar interior at {}! Trips completed: {}", playerLoc, lapsCompleted);
 			sendGameMessage(String.format("Päästiin sisälle Nature Altarille! (Kierrokset: %d)", lapsCompleted));
@@ -539,6 +547,7 @@ public class NatureAltarScriptPlugin extends Plugin
 		{
 			isTalismanActivated = false;
 			ruinsStep = RuinsStep.WAIT_ARRIVAL;
+		talismanActivationAttempts = 0;
 			log.info("No unnoted essence in inventory. Heading back to General Store...");
 			state = State.RUNNING_TO_STORE;
 			currentWaypointIndex = POSITIONS.length - 1;
@@ -743,15 +752,14 @@ public class NatureAltarScriptPlugin extends Plugin
 	}
 
 	/**
-	 * Calm, discrete steps to enter Mysterious Ruins:
-	 * Step 0: Ensure hahmo is at destination and stationary.
-	 * Step 1: Click Nature talisman active in inventory calmly and wait.
-	 * Step 2: Confirm Nature talisman is active in client (client.isWidgetSelected()).
-	 * Step 3: Left click ONLY Mysterious ruins (ID 34821).
+	 * Exact user requirement:
+	 * 1. Klikkaa 1 kerran Nature talismania että sen reunat muuttuvat valkoisiksi (aktiivinen)
+	 * 2. Varmista että talisman on aktiivinen (client.isWidgetSelected() == true)
+	 * 3. Klikkaa 1 kerran Mysterious ruinsia sisään menemiseksi
 	 */
 	private void enterMysteriousRuins(WorldPoint playerLoc)
 	{
-		// Step 0: Ensure player is at ruins destination
+		// Step 0: Ensure player is at ruins destination and stopped
 		if (ruinsStep == RuinsStep.WAIT_ARRIVAL)
 		{
 			if (playerLoc.distanceTo(NATURE_ALTAR) > 2)
@@ -760,19 +768,21 @@ public class NatureAltarScriptPlugin extends Plugin
 				actionCooldownTicks = 2;
 				return;
 			}
+			talismanActivationAttempts = 0;
 			ruinsStep = RuinsStep.ACTIVATE_TALISMAN;
 			actionCooldownTicks = 1;
 			return;
 		}
 
-		// Step 1: Click Nature talisman active in inventory calmly
+		// Step 1: Click 1 time on Nature talisman in inventory
 		if (ruinsStep == RuinsStep.ACTIVATE_TALISMAN)
 		{
+			// Check if already active (white border)
 			if (client.isWidgetSelected())
 			{
-				log.info("Nature talisman on jo aktiivinen ('Use Nature talisman ->')! Siirrytään klikkaamaan ruinsia.");
+				log.info("Nature talisman on jo aktiivinen (reunat valkoiset)! Siirrytään klikkaamaan 1 kerran ruinsia.");
 				ruinsStep = RuinsStep.CLICK_RUINS;
-				actionCooldownTicks = 2;
+				actionCooldownTicks = 1;
 				return;
 			}
 
@@ -787,68 +797,98 @@ public class NatureAltarScriptPlugin extends Plugin
 				return;
 			}
 
-			log.info("Step 1 (Rauhassa): Klikataan Nature talisman (slot {}) aktiiviseksi...", talismanSlot);
-			status = "ACTIVATING NATURE TALISMAN";
+			log.info("Klikataan 1 kerran Nature talismania (slot {}) että reunat muuttuvat valkoisiksi...", talismanSlot);
+			status = "KLIKATAAN TALISMANIA (1 KERRAN)";
 			statusColor = Color.YELLOW;
-			sendGameMessage("Klikataan Nature talisman (ID 1462) rauhassa aktiiviseksi...");
+			sendGameMessage("Klikataan 1 kerran Nature talismania (reunat valkoisiksi)...");
 
-			// Click talisman slot in inventory
-			Widget invWidget = client.getWidget(InterfaceID.Inventory.ITEMS);
-			if (invWidget != null)
+			Point slotCenter = getInventoryItemCenter(talismanSlot);
+			if (slotCenter != null)
 			{
-				Widget child = invWidget.getChild(talismanSlot);
-				if (child != null)
-				{
-					Rectangle bounds = child.getBounds();
-					if (bounds != null && bounds.width > 0 && bounds.height > 0)
-					{
-						dispatchCanvasClick(new Point((int) bounds.getCenterX(), (int) bounds.getCenterY()));
-					}
-				}
+				// Exactly 1 clean left click on the talisman slot!
+				dispatchCanvasClick(slotCenter);
+			}
+			else
+			{
+				// Fallback only if bounds are unavailable
+				client.menuAction(
+					talismanSlot,
+					InterfaceID.Inventory.ITEMS,
+					MenuAction.WIDGET_TARGET,
+					0,
+					ItemID.NATURE_TALISMAN,
+					"Use",
+					"Nature talisman"
+				);
 			}
 
-			client.menuAction(
-				talismanSlot,
-				InterfaceID.Inventory.ITEMS,
-				MenuAction.WIDGET_TARGET,
-				0,
-				ItemID.NATURE_TALISMAN,
-				"Use",
-				"Nature talisman"
-			);
-
+			talismanActivationAttempts++;
 			isTalismanActivated = true;
 			ruinsStep = RuinsStep.WAIT_TALISMAN_ACTIVE;
-			actionCooldownTicks = 2; // Calm 2-tick (1.2s) wait for talisman activation
+			actionCooldownTicks = 2; // Wait 2 ticks (1.2s) for white border to appear
 			return;
 		}
 
-		// Step 2: Verify that Nature talisman is actually active
+		// Step 2: Confirm Nature talisman is active (borders are white)
 		if (ruinsStep == RuinsStep.WAIT_TALISMAN_ACTIVE)
 		{
 			if (client.isWidgetSelected())
 			{
-				log.info("Nature talisman on nyt aktiivinen ('Use Nature talisman ->')! Odotetaan 1 tick rauhassa.");
+				log.info("Nature talismanin reunat ovat nyt valkoiset (aktiivinen)! Klikataan seuraavaksi 1 kerran Mysterious ruinsia.");
+				status = "TALISMAN AKTIIVINEN (VALKOISET REUNAT)";
+				statusColor = Color.GREEN;
+				sendGameMessage("Talisman aktiivinen (reunat valkoiset)! Klikataan 1 kerran Mysterious ruinsia...");
 				ruinsStep = RuinsStep.CLICK_RUINS;
 				actionCooldownTicks = 1; // 1 tick calm pause before clicking ruins
 				return;
 			}
 			else
 			{
-				log.info("Talisman ei vielä aktivoitunut, yritetään aktivointia uudelleen rauhassa...");
-				ruinsStep = RuinsStep.ACTIVATE_TALISMAN;
-				actionCooldownTicks = 2;
-				return;
+				log.info("Talismanin reunat eivät vielä valkoiset (attempts: {}). Odotetaan/yritetään uudelleen...", talismanActivationAttempts);
+				if (talismanActivationAttempts < 2)
+				{
+					talismanActivationAttempts++;
+					int talismanSlot = findNatureTalismanSlot();
+					if (talismanSlot != -1)
+					{
+						client.menuAction(
+							talismanSlot,
+							InterfaceID.Inventory.ITEMS,
+							MenuAction.WIDGET_TARGET,
+							0,
+							ItemID.NATURE_TALISMAN,
+							"Use",
+							"Nature talisman"
+						);
+					}
+					actionCooldownTicks = 2;
+					return;
+				}
+				else
+				{
+					ruinsStep = RuinsStep.ACTIVATE_TALISMAN;
+					actionCooldownTicks = 1;
+					return;
+				}
 			}
 		}
 
-		// Step 3: Nature talisman IS active! Now left-click ONLY Mysterious ruins (ID 34821)
+		// Step 3: Talisman is active (white border)! Now click 1 time on Mysterious ruins (ID 34821)
 		if (ruinsStep == RuinsStep.CLICK_RUINS)
 		{
+			// Verify talisman is still active before clicking ruins!
+			if (!client.isWidgetSelected())
+			{
+				log.info("Talisman ei olekaan aktiivinen, palataan aktivoimaan 1 kerran...");
+				ruinsStep = RuinsStep.ACTIVATE_TALISMAN;
+				actionCooldownTicks = 1;
+				return;
+			}
+
 			TileObject ruins = findMysteriousRuins();
 			if (ruins == null)
 			{
-				log.info("Mysterious ruins (ID {}) not found in scene yet, walking closer to {}", MYSTERIOUS_RUINS_ID, NATURE_ALTAR);
+				log.info("Mysterious ruins (ID {}) ei löytynyt skenestä, kävellään lähemmäs {}", MYSTERIOUS_RUINS_ID, NATURE_ALTAR);
 				walkToWorldPoint(NATURE_ALTAR);
 				actionCooldownTicks = 2;
 				return;
@@ -886,55 +926,119 @@ public class NatureAltarScriptPlugin extends Plugin
 			{
 			}
 
-			log.info("Step 3: Talisman on aktiivinen! Left-klikataan Mysterious ruinsia (ID {}) at scene ({}, {})...",
-				ruinsId, param0, param1);
-			status = "LEFT-CLICKING MYSTERIOUS RUINS (34821)";
+			log.info("Talisman on aktiivinen! Klikataan 1 kerran Mysterious ruinsia (ID {})...", ruinsId);
+			status = "KLIKATAAN RUINSIA (1 KERRAN)";
 			statusColor = Color.GREEN;
-			sendGameMessage("Talisman aktiivinen! Left-klikataan Mysterious ruinsia...");
+			sendGameMessage("Klikataan 1 kerran Mysterious ruinsia...");
 
 			// Find screen click point on Mysterious ruins
-			Shape clickbox = ruins.getClickbox();
-			Point clickPoint = null;
-			if (clickbox != null && clickbox.getBounds() != null)
+			Point clickPoint = getRuinsClickPoint(ruins);
+
+			// Exactly 1 clean left click on Mysterious ruins!
+			if (clickPoint != null)
 			{
-				Rectangle bounds = clickbox.getBounds();
-				if (bounds.width > 0 && bounds.height > 0)
+				dispatchCanvasClick(clickPoint);
+			}
+			else
+			{
+				client.menuAction(
+					param0,
+					param1,
+					MenuAction.WIDGET_TARGET_ON_GAME_OBJECT,
+					ruinsId,
+					0,
+					"Use",
+					"Use Nature talisman -> " + ruinsName
+				);
+			}
+
+			isTalismanActivated = false;
+			ruinsStep = RuinsStep.WAIT_ENTRY;
+			actionCooldownTicks = 3; // Wait 3 ticks (1.8s) for character to enter
+			return;
+		}
+
+		// Step 4: Wait for entry confirmation
+		if (ruinsStep == RuinsStep.WAIT_ENTRY)
+		{
+			if (isInsideNatureAltar(playerLoc))
+			{
+				return; // Handled by handleEnteringRuins
+			}
+			// If not yet entered:
+			if (client.isWidgetSelected())
+			{
+				// Talisman still active, re-click ruins 1 time
+				ruinsStep = RuinsStep.CLICK_RUINS;
+				actionCooldownTicks = 1;
+			}
+			else
+			{
+				// Talisman not active, re-activate
+				ruinsStep = RuinsStep.ACTIVATE_TALISMAN;
+				actionCooldownTicks = 1;
+			}
+		}
+	}
+
+	private Point getInventoryItemCenter(int slot)
+	{
+		Widget invWidget = client.getWidget(InterfaceID.Inventory.ITEMS);
+		if (invWidget != null)
+		{
+			Widget child = invWidget.getChild(slot);
+			if (child != null)
+			{
+				Rectangle bounds = child.getBounds();
+				if (bounds != null && bounds.width > 0 && bounds.height > 0)
 				{
-					clickPoint = new Point((int) bounds.getCenterX(), (int) bounds.getCenterY());
+					return new Point((int) bounds.getCenterX(), (int) bounds.getCenterY());
 				}
 			}
+		}
+		return null;
+	}
 
-			if (clickPoint == null && lp != null)
+	private Point getRuinsClickPoint(TileObject ruins)
+	{
+		if (ruins == null)
+		{
+			return null;
+		}
+
+		Shape clickbox = ruins.getClickbox();
+		if (clickbox != null && clickbox.getBounds() != null)
+		{
+			Rectangle bounds = clickbox.getBounds();
+			if (bounds.width > 0 && bounds.height > 0)
 			{
-				clickPoint = Perspective.localToCanvas(client, lp, client.getPlane(), 50);
+				int cx = (int) bounds.getCenterX();
+				int cy = (int) bounds.getCenterY();
+				int cw = client.getCanvasWidth();
+				int ch = client.getCanvasHeight();
+				if (cx >= 20 && cx < (cw - 220) && cy >= 20 && cy < (ch - 160))
+				{
+					return new Point(cx, cy);
+				}
 			}
+		}
 
-			// Single clean left click on Mysterious ruins in 3D viewport
-			if (clickPoint != null)
+		LocalPoint lp = ruins.getLocalLocation();
+		if (lp != null)
+		{
+			Point p = Perspective.localToCanvas(client, lp, client.getPlane(), 50);
+			if (p != null)
 			{
 				int cw = client.getCanvasWidth();
 				int ch = client.getCanvasHeight();
-				if (clickPoint.getX() >= 20 && clickPoint.getX() < (cw - 220) && clickPoint.getY() >= 20 && clickPoint.getY() < (ch - 160))
+				if (p.getX() >= 20 && p.getX() < (cw - 220) && p.getY() >= 20 && p.getY() < (ch - 160))
 				{
-					dispatchCanvasClick(clickPoint);
+					return p;
 				}
 			}
-
-			// Also execute direct menuAction
-			client.menuAction(
-				param0,
-				param1,
-				MenuAction.WIDGET_TARGET_ON_GAME_OBJECT,
-				ruinsId,
-				0,
-				"Use",
-				"Use Nature talisman -> " + ruinsName
-			);
-
-			isTalismanActivated = false;
-			ruinsStep = RuinsStep.WAIT_ARRIVAL;
-			actionCooldownTicks = 4; // 4 ticks (2.4s) calm wait to enter
 		}
+
+		return null;
 	}
 
 	private TileObject findMysteriousRuins()
